@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "tethon",
+  "project_id": "19a81a61-440f-4e0f-9f87-5b13f072da80"
+}
