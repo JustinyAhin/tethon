@@ -3,6 +3,7 @@ package hub
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +30,8 @@ type hostRecord struct {
 	protocol.RegisterHostRequest
 	LastSeen time.Time
 }
+
+const sessionListFanoutTimeout = 5 * time.Second
 
 func New(hostTimeout time.Duration) *Server {
 	if hostTimeout <= 0 {
@@ -126,11 +129,54 @@ func (s *Server) handleListHosts(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListSessions(w, r)
+	case http.MethodPost:
+		s.handleCreateSession(w, r)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
 	}
+}
 
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	hosts := s.onlineHosts()
+	summaries := make([]protocol.SessionSummary, 0)
+	for _, host := range hosts {
+		var hostResp protocol.ListSessionsResponse
+		ctx, cancel := context.WithTimeout(r.Context(), sessionListFanoutTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(host.URL, "/")+"/sessions", nil)
+		if err == nil {
+			var status int
+			status, err = s.doJSON(req, &hostResp)
+			if status >= 300 {
+				err = fmt.Errorf("host %s returned %d", host.HostID, status)
+			}
+		}
+		cancel()
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		for _, session := range hostResp.Sessions {
+			session.HostID = host.HostID
+			session.ID = host.HostID + "/" + session.ID
+			summaries = append(summaries, session)
+		}
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if !summaries[i].CreatedAt.Equal(summaries[j].CreatedAt) {
+			return summaries[i].CreatedAt.After(summaries[j].CreatedAt)
+		}
+		if summaries[i].HostID != summaries[j].HostID {
+			return summaries[i].HostID < summaries[j].HostID
+		}
+		return summaries[i].ID < summaries[j].ID
+	})
+	writeJSON(w, http.StatusOK, protocol.ListSessionsResponse{Sessions: summaries})
+}
+
+func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req protocol.CreateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -293,6 +339,22 @@ func (s *Server) onlineHost(hostID string) (hostRecord, bool) {
 		return hostRecord{}, false
 	}
 	return record, true
+}
+
+func (s *Server) onlineHosts() []hostRecord {
+	s.mu.RLock()
+	records := make([]hostRecord, 0, len(s.hosts))
+	for _, record := range s.hosts {
+		if s.isOnline(record) {
+			records = append(records, record)
+		}
+	}
+	s.mu.RUnlock()
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].HostID < records[j].HostID
+	})
+	return records
 }
 
 func (s *Server) summary(hostID string) protocol.HostSummary {

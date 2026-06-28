@@ -201,6 +201,30 @@ func (s *Store) GetSession(ctx context.Context, id string) (protocol.Session, er
 	return session, err
 }
 
+// ListSessionSummaries returns all sessions, newest-first, with the last event
+// sequence for each session. Sessions with no events report LastSeq as 0.
+func (s *Store) ListSessionSummaries(ctx context.Context) ([]protocol.SessionSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+prefixedSessionColumns("s")+`, COALESCE(MAX(e.seq), 0) AS last_seq
+		FROM sessions s
+		LEFT JOIN events e ON e.session_id = s.id
+		GROUP BY s.id
+		ORDER BY s.created_at DESC, s.id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []protocol.SessionSummary
+	for rows.Next() {
+		summary, err := scanSessionSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries, rows.Err()
+}
+
 // ListSessionsByStatus returns sessions whose status is in the given set,
 // ordered oldest-first. With no statuses it returns nothing.
 func (s *Store) ListSessionsByStatus(ctx context.Context, statuses ...string) ([]protocol.Session, error) {
@@ -239,6 +263,26 @@ func scanSession(scanner eventScanner) (protocol.Session, error) {
 	session.CreatedAt = parseTime(createdAt)
 	session.UpdatedAt = parseTime(updatedAt)
 	return session, nil
+}
+
+func scanSessionSummary(scanner eventScanner) (protocol.SessionSummary, error) {
+	var summary protocol.SessionSummary
+	var createdAt, updatedAt, worktreePath string
+	if err := scanner.Scan(&summary.ID, &summary.RepoID, &summary.Repo, &summary.CWD, &summary.Branch, &summary.BaseRef, &worktreePath, &summary.Agent, &summary.Backend, &summary.CLI, &summary.Model, &summary.Status, &createdAt, &updatedAt, &summary.LastSeq); err != nil {
+		return protocol.SessionSummary{}, err
+	}
+	summary.CreatedAt = parseTime(createdAt)
+	summary.UpdatedAt = parseTime(updatedAt)
+	return summary, nil
+}
+
+func prefixedSessionColumns(prefix string) string {
+	columns := strings.Split(sessionColumns, ", ")
+	prefixed := make([]string, len(columns))
+	for i, column := range columns {
+		prefixed[i] = prefix + "." + column
+	}
+	return strings.Join(prefixed, ", ")
 }
 
 func (s *Store) SetSessionModel(ctx context.Context, sessionID, model string) error {

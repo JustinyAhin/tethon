@@ -41,6 +41,28 @@ type Session struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+type SessionSummary struct {
+	ID        string    `json:"id"`
+	HostID    string    `json:"host_id,omitempty"`
+	RepoID    string    `json:"repo_id,omitempty"`
+	Repo      string    `json:"repo"`
+	CWD       string    `json:"cwd"`
+	Branch    string    `json:"branch"`
+	BaseRef   string    `json:"base_ref,omitempty"`
+	Agent     string    `json:"agent"`
+	Backend   string    `json:"backend,omitempty"`
+	CLI       string    `json:"cli,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	LastSeq   int64     `json:"last_seq"`
+}
+
+type ListSessionsResponse struct {
+	Sessions []SessionSummary `json:"sessions"`
+}
+
 type CreateSessionRequest struct {
 	HostID  string `json:"host_id,omitempty"`
 	RepoID  string `json:"repo_id,omitempty"`

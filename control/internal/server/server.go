@@ -154,11 +154,29 @@ func (s *Server) resolveRepo(req protocol.CreateSessionRequest) (resolvedRepo, e
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListSessions(w, r)
+	case http.MethodPost:
+		s.handleCreateSession(w, r)
+	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	summaries, err := s.store.ListSessionSummaries(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if summaries == nil {
+		summaries = []protocol.SessionSummary{}
+	}
+	writeJSON(w, http.StatusOK, protocol.ListSessionsResponse{Sessions: summaries})
+}
 
+func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req protocol.CreateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.logger.Warn("session_create_rejected", "reason", "invalid json")

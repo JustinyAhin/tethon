@@ -65,6 +65,87 @@ func TestHubCreatesSessionAndStreamsReplayThroughHost(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})
 }
 
+func TestHubListsSessionsAcrossOnlineHosts(t *testing.T) {
+	hub := httptest.NewServer(New(time.Second).Handler())
+	t.Cleanup(hub.Close)
+	mac := newHost(t)
+	vps := newHost(t)
+	registerHost(t, hub.URL, protocol.RegisterHostRequest{
+		HostID: "mac",
+		Name:   "Mac",
+		URL:    mac.URL,
+		Agents: []string{"fake"},
+	})
+	registerHost(t, hub.URL, protocol.RegisterHostRequest{
+		HostID: "vps",
+		Name:   "VPS",
+		URL:    vps.URL,
+		Agents: []string{"fake"},
+	})
+
+	done := createSession(t, hub.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+	postJSON(t, hub.URL+"/sessions/"+done.ID+"/input", protocol.InputRequest{Text: "done"})
+	running := createSession(t, hub.URL, protocol.CreateSessionRequest{HostID: "vps", Repo: ".", Agent: "fake"})
+
+	var resp protocol.ListSessionsResponse
+	getJSON(t, hub.URL+"/sessions", &resp)
+	if len(resp.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(resp.Sessions))
+	}
+	byID := map[string]protocol.SessionSummary{resp.Sessions[0].ID: resp.Sessions[0], resp.Sessions[1].ID: resp.Sessions[1]}
+	if byID[done.ID].HostID != "mac" || byID[done.ID].Status != "done" || byID[done.ID].LastSeq != 6 {
+		t.Fatalf("done summary = %+v, want mac done last_seq 6", byID[done.ID])
+	}
+	if byID[running.ID].HostID != "vps" || byID[running.ID].Status != "running" || byID[running.ID].LastSeq != 3 {
+		t.Fatalf("running summary = %+v, want vps running last_seq 3", byID[running.ID])
+	}
+	if !strings.HasPrefix(done.ID, "mac/") || !strings.HasPrefix(running.ID, "vps/") {
+		t.Fatalf("expected compound ids, got %q and %q", done.ID, running.ID)
+	}
+}
+
+func TestHubListSessionsOmitsOfflineHosts(t *testing.T) {
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	hub := New(time.Second)
+	hub.now = func() time.Time { return now }
+	hubTS := httptest.NewServer(hub.Handler())
+	t.Cleanup(hubTS.Close)
+	host := newHost(t)
+
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{HostID: "old", URL: "http://127.0.0.1:1"})
+	now = now.Add(2 * time.Second)
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{HostID: "mac", URL: host.URL})
+	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+
+	var resp protocol.ListSessionsResponse
+	getJSON(t, hubTS.URL+"/sessions", &resp)
+	if len(resp.Sessions) != 1 {
+		t.Fatalf("expected 1 online-host session, got %d", len(resp.Sessions))
+	}
+	if resp.Sessions[0].ID != session.ID || resp.Sessions[0].HostID != "mac" {
+		t.Fatalf("unexpected session summary: %+v", resp.Sessions[0])
+	}
+}
+
+func TestHubListSessionsFailsWhenOnlineHostFanoutFails(t *testing.T) {
+	hub := httptest.NewServer(New(time.Second).Handler())
+	t.Cleanup(hub.Close)
+	badHost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusInternalServerError, "boom")
+	}))
+	t.Cleanup(badHost.Close)
+	registerHost(t, hub.URL, protocol.RegisterHostRequest{HostID: "bad", URL: badHost.URL})
+
+	resp, err := http.Get(hub.URL + "/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %s", resp.Status)
+	}
+}
+
 func TestHubProxiesApprovalResolution(t *testing.T) {
 	hubTS, hostTS := newHubAndHost(t, time.Second)
 	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
@@ -141,6 +222,22 @@ func newHubAndHost(t *testing.T, timeout time.Duration) (*httptest.Server, *http
 	t.Cleanup(hostTS.Close)
 
 	return hubTS, hostTS
+}
+
+func newHost(t *testing.T) *httptest.Server {
+	t.Helper()
+	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "hostd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	ts := httptest.NewServer(hostserver.New(store).Handler())
+	t.Cleanup(ts.Close)
+	return ts
 }
 
 func registerHost(t *testing.T, hubURL string, req protocol.RegisterHostRequest) {

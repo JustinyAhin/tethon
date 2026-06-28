@@ -46,6 +46,53 @@ func TestStreamReconnectFromCursorReturnsOnlyLaterEvents(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})
 }
 
+func TestListSessionsReturnsLocalSummaries(t *testing.T) {
+	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	done, err := store.CreateSession(context.Background(), sessionlog.CreateSessionParams{Repo: ".", Agent: "fake", Status: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(context.Background(), done.ID, protocol.EventOutput, protocol.OutputPayload{Text: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(context.Background(), done.ID, protocol.EventDone, map[string]string{"reason": "test"}); err != nil {
+		t.Fatal(err)
+	}
+	running, err := store.CreateSession(context.Background(), sessionlog.CreateSessionParams{Repo: ".", Agent: "fake", Status: "running"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(context.Background(), running.ID, protocol.EventOutput, protocol.OutputPayload{Text: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(New(store).Handler())
+	t.Cleanup(ts.Close)
+
+	var resp protocol.ListSessionsResponse
+	getJSON(t, ts.URL+"/sessions", &resp)
+	if len(resp.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(resp.Sessions))
+	}
+	byID := map[string]protocol.SessionSummary{resp.Sessions[0].ID: resp.Sessions[0], resp.Sessions[1].ID: resp.Sessions[1]}
+	if byID[done.ID].Status != "done" || byID[done.ID].LastSeq != 2 {
+		t.Fatalf("done summary = %+v, want status done and last_seq 2", byID[done.ID])
+	}
+	if byID[running.ID].Status != "running" || byID[running.ID].LastSeq != 1 {
+		t.Fatalf("running summary = %+v, want status running and last_seq 1", byID[running.ID])
+	}
+	if byID[running.ID].HostID != "" || strings.Contains(byID[running.ID].ID, "/") {
+		t.Fatalf("host summary should use local ids without host_id: %+v", byID[running.ID])
+	}
+}
+
 func TestApprovalLifecycleEmitsResolvedEvent(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -411,6 +458,21 @@ func postJSONInto(t *testing.T, url string, value any, out any) {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		t.Fatalf("POST %s returned %s", url, resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func getJSON(t *testing.T, url string, out any) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		t.Fatalf("GET %s returned %s", url, resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		t.Fatal(err)

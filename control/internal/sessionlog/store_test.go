@@ -211,6 +211,55 @@ func TestListSessionsByStatus(t *testing.T) {
 	}
 }
 
+func TestListSessionSummariesReturnsAllSessionsWithLastSeq(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	done, err := store.CreateSession(ctx, CreateSessionParams{
+		RepoID:  "repo_1",
+		Repo:    "/repos/one",
+		CWD:     "control",
+		Branch:  "feature",
+		BaseRef: "main",
+		Agent:   "claude-cli",
+		Backend: "anthropic",
+		CLI:     "claude",
+		Model:   "claude-sonnet-4-5",
+		Status:  "done",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := store.CreateSession(ctx, CreateSessionParams{Repo: "/repos/two", Agent: "fake", Status: "running"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(ctx, done.ID, protocol.EventOutput, protocol.OutputPayload{Text: "one"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(ctx, done.ID, protocol.EventDone, map[string]string{"reason": "test"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.ListSessionSummaries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 summaries, got %d", len(got))
+	}
+	byID := map[string]protocol.SessionSummary{got[0].ID: got[0], got[1].ID: got[1]}
+	if byID[done.ID].LastSeq != 2 {
+		t.Fatalf("done last_seq = %d, want 2", byID[done.ID].LastSeq)
+	}
+	if byID[running.ID].LastSeq != 0 {
+		t.Fatalf("running last_seq = %d, want 0", byID[running.ID].LastSeq)
+	}
+	if byID[done.ID].RepoID != "repo_1" || byID[done.ID].CWD != "control" || byID[done.ID].BaseRef != "main" || byID[done.ID].Model != "claude-sonnet-4-5" {
+		t.Fatalf("metadata was not preserved: %+v", byID[done.ID])
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
