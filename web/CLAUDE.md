@@ -1,6 +1,6 @@
 # tethon web
 
-SvelteKit web companion — the **secondary screen** for tethon: a dashboard plus a full xterm.js raw terminal, driven by the same hub API the mobile client uses. It is deliberately the *thinner* surface; the mobile Expo client is the primary one. Per the build order (`../kb/agent-control-design.md`), this is the fastest place to validate the session protocol — home turf — so prefer proving the core loop here over polishing UI.
+SvelteKit web companion — the **secondary screen** for tethon: a dashboard plus a full xterm.js raw terminal, driven by the same hub API the mobile client uses. It is deliberately the _thinner_ surface; the mobile Expo client is the primary one. Per the build order (`../kb/agent-control-design.md`), this is the fastest place to validate the session protocol — home turf — so prefer proving the core loop here over polishing UI.
 
 General repo rules (git, commit tags, issue tracking, working principles, never reading `.env`) live in the root `CLAUDE.md`. This file covers web-specific rules only. Commit with the `[web]` tag.
 
@@ -13,7 +13,7 @@ General repo rules (git, commit tags, issue tracking, working principles, never 
 - **Language**: TypeScript, `strict` mode.
 - **Tooling**: Prettier + ESLint.
 
-Experimental SvelteKit features are on (see `vite.config.ts`): async (`await` in components), **remote functions**, explicit environment variables, and rendering-error handling. Keep them on.
+Experimental SvelteKit features are on (see `vite.config.ts`): async (`await` in components), **remote functions**, and rendering-error handling. Keep them on.
 
 No database and no component library is set up yet — don't introduce one without it being asked for. This is a thin client over the hub, not a data app.
 
