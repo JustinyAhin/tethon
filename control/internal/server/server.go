@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ type Server struct {
 	broker    *broker
 	agents    *agent.Registry
 	repoRoots []string
+	logger    *slog.Logger
 	running   map[string]agent.RunningSession
 	runningM  sync.RWMutex
 }
@@ -29,6 +31,7 @@ type Server struct {
 type Config struct {
 	Agents    *agent.Registry
 	RepoRoots []string
+	Logger    *slog.Logger
 }
 
 func New(store *sessionlog.Store) *Server {
@@ -43,6 +46,10 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 	agents := config.Agents
 	if agents == nil {
 		agents = agent.DefaultRegistry()
+	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
 	repoRoots := make([]string, 0, len(config.RepoRoots))
 	for _, root := range config.RepoRoots {
@@ -63,6 +70,7 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 		broker:    newBroker(),
 		agents:    agents,
 		repoRoots: repoRoots,
+		logger:    logger,
 		running:   make(map[string]agent.RunningSession),
 	}
 }
@@ -104,10 +112,12 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 
 	var req protocol.CreateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.logger.Warn("session_create_rejected", "reason", "invalid json")
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	if req.Repo == "" {
+		s.logger.Warn("session_create_rejected", "agent", req.Agent, "reason", "repo is required")
 		writeError(w, http.StatusBadRequest, "repo is required")
 		return
 	}
@@ -116,12 +126,14 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	adapter, ok := s.agents.Get(req.Agent)
 	if !ok {
+		s.logger.Warn("session_create_rejected", "agent", req.Agent, "repo", req.Repo, "cwd", req.CWD, "reason", "unknown agent")
 		writeError(w, http.StatusBadRequest, "unknown agent")
 		return
 	}
 
 	normalizedReq, err := s.normalizeCreateRequest(req)
 	if err != nil {
+		s.logger.Warn("session_create_rejected", "agent", req.Agent, "repo", req.Repo, "cwd", req.CWD, "reason", err.Error())
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -134,18 +146,22 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		Status: "running",
 	})
 	if err != nil {
+		s.logger.Error("session_create_failed", "agent", normalizedReq.Agent, "repo", normalizedReq.Repo, "cwd", normalizedReq.CWD, "error", err.Error())
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.logger.Info("session_create_accepted", "session_id", session.ID, "agent", session.Agent, "repo", session.Repo, "cwd", session.CWD, "status", session.Status)
 
 	running, err := adapter.Start(r.Context(), agent.StartRequest{Session: session, Create: normalizedReq}, s.sink(session.ID))
 	if err != nil {
 		_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
 		_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
+		s.logger.Error("session_agent_start_failed", "session_id", session.ID, "agent", session.Agent, "error", err.Error())
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.setRunning(session.ID, running)
+	s.logger.Info("session_agent_started", "session_id", session.ID, "agent", session.Agent)
 
 	writeJSON(w, http.StatusCreated, protocol.CreateSessionResponse{ID: session.ID, Status: session.Status})
 }
@@ -323,29 +339,35 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, sessionID 
 func (s *Server) handleInput(w http.ResponseWriter, r *http.Request, sessionID string) {
 	var req protocol.InputRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.logger.Warn("session_input_rejected", "session_id", sessionID, "reason", "invalid json")
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	if req.Text == "" {
+		s.logger.Warn("session_input_rejected", "session_id", sessionID, "reason", "text is required")
 		writeError(w, http.StatusBadRequest, "text is required")
 		return
 	}
 	if _, err := s.store.GetSession(r.Context(), sessionID); err != nil {
+		s.logger.Warn("session_input_rejected", "session_id", sessionID, "text_len", len(req.Text), "reason", err.Error())
 		writeStoreError(w, err)
 		return
 	}
 	running := s.getRunning(sessionID)
 	if running == nil {
+		s.logger.Warn("session_input_rejected", "session_id", sessionID, "text_len", len(req.Text), "reason", "session is not active")
 		writeError(w, http.StatusConflict, "session is not active")
 		return
 	}
 
 	events, err := running.Input(r.Context(), req.Text)
 	if err != nil {
+		s.logger.Warn("session_input_rejected", "session_id", sessionID, "text_len", len(req.Text), "reason", err.Error())
 		writeAgentError(w, err)
 		return
 	}
 	s.clearRunningIfTerminal(sessionID, running)
+	s.logger.Info("session_input_accepted", "session_id", sessionID, "text_len", len(req.Text), "event_count", len(events))
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
 }
@@ -353,53 +375,64 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request, sessionID s
 func (s *Server) handleApproval(w http.ResponseWriter, r *http.Request, sessionID, requestID string) {
 	var req protocol.ResolveApprovalRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.logger.Warn("session_approval_rejected", "session_id", sessionID, "request_id", requestID, "reason", "invalid json")
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	if req.Action != "approve" && req.Action != "deny" && req.Action != "reply" {
+		s.logger.Warn("session_approval_rejected", "session_id", sessionID, "request_id", requestID, "action", req.Action, "reason", "invalid action")
 		writeError(w, http.StatusBadRequest, "action must be approve, deny, or reply")
 		return
 	}
 	if req.Action == "reply" && req.Text == "" {
+		s.logger.Warn("session_approval_rejected", "session_id", sessionID, "request_id", requestID, "action", req.Action, "reason", "text is required")
 		writeError(w, http.StatusBadRequest, "text is required for reply")
 		return
 	}
 	if _, err := s.store.GetSession(r.Context(), sessionID); err != nil {
+		s.logger.Warn("session_approval_rejected", "session_id", sessionID, "request_id", requestID, "action", req.Action, "reason", err.Error())
 		writeStoreError(w, err)
 		return
 	}
 	running := s.getRunning(sessionID)
 	if running == nil {
+		s.logger.Warn("session_approval_rejected", "session_id", sessionID, "request_id", requestID, "action", req.Action, "reason", "session is not active")
 		writeError(w, http.StatusConflict, "session is not active")
 		return
 	}
 
 	events, err := running.ResolveApproval(r.Context(), requestID, req.Action, req.Text)
 	if err != nil {
+		s.logger.Warn("session_approval_rejected", "session_id", sessionID, "request_id", requestID, "action", req.Action, "reason", err.Error())
 		writeAgentError(w, err)
 		return
 	}
 	s.clearRunningIfTerminal(sessionID, running)
+	s.logger.Info("session_approval_accepted", "session_id", sessionID, "request_id", requestID, "action", req.Action, "event_count", len(events))
 	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
 }
 
 func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, sessionID string) {
 	if _, err := s.store.GetSession(r.Context(), sessionID); err != nil {
+		s.logger.Warn("session_cancel_rejected", "session_id", sessionID, "reason", err.Error())
 		writeStoreError(w, err)
 		return
 	}
 	running := s.getRunning(sessionID)
 	if running == nil {
+		s.logger.Warn("session_cancel_rejected", "session_id", sessionID, "reason", "session is not active")
 		writeError(w, http.StatusConflict, "session is not active")
 		return
 	}
 
 	events, err := running.Cancel(r.Context())
 	if err != nil {
+		s.logger.Warn("session_cancel_rejected", "session_id", sessionID, "reason", err.Error())
 		writeAgentError(w, err)
 		return
 	}
 	s.clearRunningIfTerminal(sessionID, running)
+	s.logger.Info("session_cancel_accepted", "session_id", sessionID, "event_count", len(events))
 	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
 }
 

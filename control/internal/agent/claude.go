@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ type ClaudeConfig struct {
 	Binary               string
 	AllowAnthropicAPIKey bool
 	KillDelay            time.Duration
+	Logger               *slog.Logger
 	Runner               CommandRunner
 }
 
@@ -102,6 +104,7 @@ type claudeAdapter struct {
 	binary               string
 	allowAnthropicAPIKey bool
 	killDelay            time.Duration
+	logger               *slog.Logger
 	runner               CommandRunner
 }
 
@@ -118,10 +121,15 @@ func NewClaude(config ClaudeConfig) Adapter {
 	if killDelay <= 0 {
 		killDelay = 5 * time.Second
 	}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &claudeAdapter{
 		binary:               binary,
 		allowAnthropicAPIKey: config.AllowAnthropicAPIKey,
 		killDelay:            killDelay,
+		logger:               logger,
 		runner:               runner,
 	}
 }
@@ -141,11 +149,15 @@ func (*claudeAdapter) Capabilities() Capabilities {
 
 func (a *claudeAdapter) Start(ctx context.Context, req StartRequest, sink Sink) (RunningSession, error) {
 	if !a.allowAnthropicAPIKey && os.Getenv("ANTHROPIC_API_KEY") != "" {
-		return nil, errors.New("claude-cli refuses to run while ANTHROPIC_API_KEY is set")
+		err := errors.New("claude-cli refuses to run while ANTHROPIC_API_KEY is set")
+		a.logger.Warn("agent_start_rejected", "agent", "claude-cli", "session_id", req.Session.ID, "reason", err.Error())
+		return nil, err
 	}
 	prompt := strings.TrimSpace(req.Create.Prompt)
 	if prompt == "" {
-		return nil, errors.New("prompt is required for claude-cli sessions")
+		err := errors.New("prompt is required for claude-cli sessions")
+		a.logger.Warn("agent_start_rejected", "agent", "claude-cli", "session_id", req.Session.ID, "reason", err.Error())
+		return nil, err
 	}
 
 	session := &claudeSession{
@@ -189,6 +201,7 @@ type claudeApproval struct {
 
 func (s *claudeSession) Input(ctx context.Context, text string) ([]protocol.Event, error) {
 	if err := s.checkCanStart(); err != nil {
+		s.adapter.logger.Warn("agent_input_rejected", "agent", "claude-cli", "session_id", s.sessionID, "text_len", len(text), "reason", err.Error())
 		return nil, err
 	}
 
@@ -204,6 +217,7 @@ func (s *claudeSession) Input(ctx context.Context, text string) ([]protocol.Even
 
 func (s *claudeSession) ResolveApproval(ctx context.Context, requestID, action, text string) ([]protocol.Event, error) {
 	if err := s.checkCanStart(); err != nil {
+		s.adapter.logger.Warn("agent_approval_rejected", "agent", "claude-cli", "session_id", s.sessionID, "request_id", requestID, "action", action, "reason", err.Error())
 		return nil, err
 	}
 	if err := s.sink.ResolveApproval(ctx, requestID, action); err != nil {
@@ -229,6 +243,7 @@ func (s *claudeSession) Cancel(ctx context.Context) ([]protocol.Event, error) {
 	s.mu.Lock()
 	if s.terminal {
 		s.mu.Unlock()
+		s.adapter.logger.Warn("agent_cancel_rejected", "agent", "claude-cli", "session_id", s.sessionID, "reason", ErrSessionDone.Error())
 		return nil, ErrSessionDone
 	}
 	process := s.process
@@ -238,20 +253,27 @@ func (s *claudeSession) Cancel(ctx context.Context) ([]protocol.Event, error) {
 		s.cancelling = true
 	}
 	s.mu.Unlock()
+	s.adapter.logger.Info("agent_cancel_requested", "agent", "claude-cli", "session_id", s.sessionID, "active", active)
 
 	if active && process != nil {
-		_ = process.Interrupt()
+		interruptErr := process.Interrupt()
+		s.adapter.logger.Info("agent_interrupt_sent", "agent", "claude-cli", "session_id", s.sessionID, "error", errorString(interruptErr))
 		select {
 		case <-done:
 		case <-time.After(s.adapter.killDelay):
-			_ = process.Kill()
+			killErr := process.Kill()
+			s.adapter.logger.Warn("agent_hard_kill_sent", "agent", "claude-cli", "session_id", s.sessionID, "error", errorString(killErr))
 			select {
 			case <-done:
 			case <-time.After(time.Second):
 			}
 		}
 	}
-	return s.markCancelled(ctx)
+	events, err := s.markCancelled(ctx)
+	if err == nil {
+		s.adapter.logger.Info("agent_cancel_complete", "agent", "claude-cli", "session_id", s.sessionID)
+	}
+	return events, err
 }
 
 func (s *claudeSession) Terminal() bool {
@@ -299,6 +321,7 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string
 		args = append(args, "--resume", claudeSessionID)
 	}
 	args = append(args, prompt)
+	s.adapter.logger.Info("agent_turn_start", "agent", "claude-cli", "session_id", s.sessionID, "cwd", s.workDir, "resume", claudeSessionID != "", "prompt_len", len(prompt))
 
 	process, err := s.adapter.runner.Start(runCtx, CommandSpec{
 		Binary: s.adapter.binary,
@@ -307,6 +330,7 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string
 	})
 	if err != nil {
 		s.finishTurn()
+		s.adapter.logger.Error("agent_process_start_failed", "agent", "claude-cli", "session_id", s.sessionID, "cwd", s.workDir, "error", err.Error())
 		return err
 	}
 
@@ -342,9 +366,11 @@ func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, app
 		close(stderrDone)
 	}()
 
-	if err := s.consumeStream(ctx, process.Stdout()); err != nil {
+	streamErr := s.consumeStream(ctx, process.Stdout())
+	if streamErr != nil {
 		if !s.isCancellingOrTerminal() {
-			s.appendTerminalError(ctx, err.Error())
+			s.adapter.logger.Error("agent_stream_error", "agent", "claude-cli", "session_id", s.sessionID, "error", streamErr.Error())
+			s.appendTerminalError(ctx, streamErr.Error())
 		}
 	}
 	waitErr := process.Wait()
@@ -354,7 +380,10 @@ func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, app
 		if message == "" {
 			message = waitErr.Error()
 		}
+		s.adapter.logger.Error("agent_turn_exit", "agent", "claude-cli", "session_id", s.sessionID, "success", false, "stderr_len", stderr.Len(), "error", waitErr.Error())
 		s.appendTerminalError(ctx, message)
+	} else if waitErr == nil && streamErr == nil {
+		s.adapter.logger.Info("agent_turn_exit", "agent", "claude-cli", "session_id", s.sessionID, "success", true, "stderr_len", stderr.Len())
 	}
 
 	if approvalID != "" {
@@ -484,6 +513,7 @@ func (s *claudeSession) createApproval(ctx context.Context, approval claudeAppro
 	if err := s.sink.SetSessionStatus(ctx, "awaiting_approval"); err != nil {
 		return err
 	}
+	s.adapter.logger.Info("agent_awaiting_approval", "agent", "claude-cli", "session_id", s.sessionID, "request_id", payload.RequestID, "tool_name", payload.ToolName)
 
 	s.mu.Lock()
 	if s.pending == nil {
@@ -551,6 +581,13 @@ func (s *claudeSession) appendTerminalError(ctx context.Context, message string)
 	s.mu.Unlock()
 	_, _ = s.sink.AppendEvent(ctx, protocol.EventError, protocol.ErrorPayload{Message: message})
 	_ = s.sink.SetSessionStatus(ctx, "error")
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 type claudeStreamEvent struct {

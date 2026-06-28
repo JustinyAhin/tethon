@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -105,6 +106,31 @@ func TestCancelSessionEmitsDoneAndDeactivatesSession(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("expected 409 after cancel, got %s", resp.Status)
+	}
+}
+
+func TestServerLogsSessionLifecycleWithoutInputBody(t *testing.T) {
+	var logs bytes.Buffer
+	ts := newTestServerWithConfig(t, Config{
+		Agents: agent.NewRegistry(agent.NewFake()),
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+	})
+
+	session := postSession(t, ts.URL)
+	postJSON(t, ts.URL+"/sessions/"+session.ID+"/input", protocol.InputRequest{Text: "secret input text"})
+	postJSON(t, ts.URL+"/sessions/"+session.ID+"/cancel", map[string]string{})
+
+	raw := logs.String()
+	for _, want := range []string{"session_create_accepted", "session_agent_started", "session_input_accepted", "session_cancel_accepted"} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("logs missing %q: %s", want, raw)
+		}
+	}
+	if strings.Contains(raw, "secret input text") {
+		t.Fatalf("logs contain input body: %s", raw)
+	}
+	if !strings.Contains(raw, `"text_len":17`) {
+		t.Fatalf("logs missing input length: %s", raw)
 	}
 }
 

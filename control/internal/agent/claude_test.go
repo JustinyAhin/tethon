@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -149,6 +151,34 @@ func TestClaudeMalformedStreamEmitsError(t *testing.T) {
 	}
 }
 
+func TestClaudeLogsMalformedStreamWithoutPromptBody(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	runner := &fakeCommandRunner{outputs: []string{"not json\n"}}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, Logger: logger})
+
+	_, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "secret prompt"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink.waitForType(t, protocol.EventError)
+
+	raw := logs.String()
+	if !strings.Contains(raw, "agent_turn_start") || !strings.Contains(raw, "agent_stream_error") {
+		t.Fatalf("expected turn start and stream error logs, got %s", raw)
+	}
+	if strings.Contains(raw, "secret prompt") {
+		t.Fatalf("logs contain prompt body: %s", raw)
+	}
+	if !strings.Contains(raw, `"prompt_len":13`) {
+		t.Fatalf("logs missing prompt length: %s", raw)
+	}
+}
+
 func TestClaudeNonZeroExitEmitsStderrError(t *testing.T) {
 	process := newBlockingProcess()
 	process.stdout = strings.NewReader("")
@@ -212,11 +242,13 @@ func TestClaudeCancelInterruptsRunningProcess(t *testing.T) {
 }
 
 func TestClaudeCancelHardKillsIgnoredInterrupt(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	process := newBlockingProcess()
 	process.killReleases = true
 	runner := &singleProcessRunner{process: process}
 	sink := newMemorySink()
-	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, KillDelay: time.Millisecond})
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, KillDelay: time.Millisecond, Logger: logger})
 
 	running, err := adapter.Start(context.Background(), StartRequest{
 		Session: protocol.Session{ID: "ses_1", Repo: "."},
@@ -234,6 +266,12 @@ func TestClaudeCancelHardKillsIgnoredInterrupt(t *testing.T) {
 	}
 	if process.kills() != 1 {
 		t.Fatalf("kills = %d, want 1", process.kills())
+	}
+	raw := logs.String()
+	for _, want := range []string{"agent_cancel_requested", "agent_interrupt_sent", "agent_hard_kill_sent", "agent_cancel_complete"} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("logs missing %q: %s", want, raw)
+		}
 	}
 }
 

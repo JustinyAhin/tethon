@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -64,6 +65,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	logger := slog.Default()
 
 	store, err := sessionlog.Open(context.Background(), *dbPath)
 	if err != nil {
@@ -74,6 +76,7 @@ func run() error {
 	if _, err := exec.LookPath("claude"); err == nil {
 		agentRegistry = agent.NewRegistry(agent.NewFake(), agent.NewClaude(agent.ClaudeConfig{
 			AllowAnthropicAPIKey: *allowAnthropicAPIKey,
+			Logger:               logger,
 		}))
 	}
 
@@ -93,6 +96,7 @@ func run() error {
 	srv := &http.Server{Addr: *addr, Handler: server.NewWithConfig(store, server.Config{
 		Agents:    agentRegistry,
 		RepoRoots: normalizedRepoRoots,
+		Logger:    logger,
 	}).Handler()}
 	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
 	return srv.ListenAndServe()
