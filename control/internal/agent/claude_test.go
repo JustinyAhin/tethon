@@ -127,6 +127,83 @@ func TestClaudeDeferredToolMapsToApprovalAndResolutionResumes(t *testing.T) {
 	}
 }
 
+func TestClaudeResultUsageEmitsUsageEventAndUpdatesModel(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"system","subtype":"init","session_id":"claude_1"}` + "\n" +
+			`{"type":"result","is_error":false,"session_id":"claude_1","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":1000,"output_tokens":2000,"cache_read_input_tokens":3000,"cache_creation_input_tokens":4000}}` + "\n",
+	}}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	_, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "usage"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	event := sink.waitForType(t, protocol.EventUsage)
+	var payload protocol.UsagePayload
+	decodePayload(t, event, &payload)
+	if payload.Model != "claude-sonnet-4-5-20250929" || sink.model != payload.Model {
+		t.Fatalf("model = payload %q sink %q", payload.Model, sink.model)
+	}
+	if payload.Tokens.Input != 1000 || payload.Tokens.Output != 2000 || payload.Tokens.CacheRead != 3000 || payload.Tokens.CacheWrite != 4000 {
+		t.Fatalf("unexpected tokens: %+v", payload.Tokens)
+	}
+	if payload.Cost == nil || payload.Cost.EstimateStatus != "estimated" {
+		t.Fatalf("missing estimated cost: %+v", payload.Cost)
+	}
+	want := 1000*3.0/1_000_000 + 2000*15.0/1_000_000 + 3000*0.30/1_000_000 + 4000*3.75/1_000_000
+	if payload.Cost.TotalUSD != want {
+		t.Fatalf("cost = %.12f, want %.12f", payload.Cost.TotalUSD, want)
+	}
+}
+
+func TestClaudeUsageUnknownModelOmitsEstimate(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"result","is_error":false,"session_id":"claude_1","model":"claude-unknown-1","usage":{"input_tokens":1000,"output_tokens":2000}}` + "\n",
+	}}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	_, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "usage"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	event := sink.waitForType(t, protocol.EventUsage)
+	var payload protocol.UsagePayload
+	decodePayload(t, event, &payload)
+	if payload.Cost == nil || payload.Cost.EstimateStatus != "unknown_model" || payload.Cost.TotalUSD != 0 {
+		t.Fatalf("unexpected unknown-model cost: %+v", payload.Cost)
+	}
+}
+
+func TestClaudeResultWithoutUsageEmitsNoUsageEvent(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"result","is_error":false,"session_id":"claude_1","model":"claude-sonnet-4-5-20250929"}` + "\n",
+	}}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "no usage"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink.waitForInactive(t, running)
+	if event, ok := sink.eventOfType(protocol.EventUsage); ok {
+		t.Fatalf("unexpected usage event: %+v", event)
+	}
+}
+
 func TestClaudeMalformedStreamEmitsError(t *testing.T) {
 	runner := &fakeCommandRunner{outputs: []string{"not json\n"}}
 	sink := newMemorySink()
@@ -449,6 +526,7 @@ type memorySink struct {
 	events    []protocol.Event
 	approvals map[string]string
 	state     string
+	model     string
 }
 
 func newMemorySink() *memorySink {
@@ -496,6 +574,13 @@ func (s *memorySink) SetSessionStatus(_ context.Context, status string) error {
 	return nil
 }
 
+func (s *memorySink) SetSessionModel(_ context.Context, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.model = model
+	return nil
+}
+
 func (s *memorySink) waitForType(t *testing.T, eventType string) protocol.Event {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
@@ -512,6 +597,17 @@ func (s *memorySink) waitForType(t *testing.T, eventType string) protocol.Event 
 	}
 	t.Fatalf("timed out waiting for event type %s", eventType)
 	return protocol.Event{}
+}
+
+func (s *memorySink) eventOfType(eventType string) (protocol.Event, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, event := range s.events {
+		if event.Type == eventType {
+			return event, true
+		}
+	}
+	return protocol.Event{}, false
 }
 
 func (s *memorySink) waitForText(t *testing.T, text string) {

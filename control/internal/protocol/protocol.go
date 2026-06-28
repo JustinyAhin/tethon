@@ -11,6 +11,7 @@ const (
 	EventAwaitingApproval = "awaiting_approval"
 	EventApprovalResolved = "approval_resolved"
 	EventInputReceived    = "input_received"
+	EventUsage            = "usage"
 	EventDone             = "done"
 	EventError            = "error"
 )
@@ -29,6 +30,9 @@ type Session struct {
 	CWD       string    `json:"cwd"`
 	Branch    string    `json:"branch"`
 	Agent     string    `json:"agent"`
+	Backend   string    `json:"backend,omitempty"`
+	CLI       string    `json:"cli,omitempty"`
+	Model     string    `json:"model,omitempty"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -100,4 +104,41 @@ type InputReceivedPayload struct {
 
 type ErrorPayload struct {
 	Message string `json:"message"`
+}
+
+type UsagePayload struct {
+	Agent   string        `json:"agent"`
+	Backend string        `json:"backend"`
+	CLI     string        `json:"cli"`
+	Model   string        `json:"model,omitempty"`
+	Tokens  UsageTokens   `json:"tokens"`
+	Cost    *UsageCost    `json:"cost,omitempty"`
+	Raw     *UsageRawInfo `json:"raw,omitempty"`
+}
+
+type UsageTokens struct {
+	Input         int64 `json:"input,omitempty"`
+	Output        int64 `json:"output,omitempty"`
+	CacheRead     int64 `json:"cache_read,omitempty"`
+	CacheWrite    int64 `json:"cache_write,omitempty"`
+	CacheWrite5m  int64 `json:"cache_write_5m,omitempty"`
+	CacheWrite1h  int64 `json:"cache_write_1h,omitempty"`
+	TotalBillable int64 `json:"total_billable,omitempty"`
+}
+
+type UsageCost struct {
+	Currency       string  `json:"currency"`
+	Estimated      bool    `json:"estimated"`
+	EstimateStatus string  `json:"estimate_status"`
+	TotalUSD       float64 `json:"total_usd"`
+	InputUSD       float64 `json:"input_usd,omitempty"`
+	OutputUSD      float64 `json:"output_usd,omitempty"`
+	CacheReadUSD   float64 `json:"cache_read_usd,omitempty"`
+	CacheWriteUSD  float64 `json:"cache_write_usd,omitempty"`
+	PricingSource  string  `json:"pricing_source"`
+	PricingVersion string  `json:"pricing_version"`
+}
+
+type UsageRawInfo struct {
+	ProviderUsagePresent bool `json:"provider_usage_present,omitempty"`
 }

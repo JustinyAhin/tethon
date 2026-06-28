@@ -2,6 +2,7 @@ package sessionlog
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -100,6 +101,76 @@ func TestResolveApprovalRequiresPendingApproval(t *testing.T) {
 	}
 	if err := store.ResolveApproval(ctx, session.ID, "req_1", "deny"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound for already resolved approval, got %v", err)
+	}
+}
+
+func TestSessionMetadataPersistsAndModelUpdates(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	session, err := store.CreateSession(ctx, CreateSessionParams{
+		Repo:    ".",
+		Agent:   "claude-cli",
+		Backend: "anthropic",
+		CLI:     "claude",
+		Model:   "claude-sonnet-4-5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Backend != "anthropic" || session.CLI != "claude" || session.Model != "claude-sonnet-4-5" {
+		t.Fatalf("unexpected session metadata: %+v", session)
+	}
+	if err := store.SetSessionModel(ctx, session.ID, "claude-opus-4-8"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Backend != "anthropic" || got.CLI != "claude" || got.Model != "claude-opus-4-8" {
+		t.Fatalf("unexpected stored metadata: %+v", got)
+	}
+}
+
+func TestOpenMigratesSessionMetadataColumns(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "tethon.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE sessions (
+		id TEXT PRIMARY KEY,
+		repo TEXT NOT NULL,
+		cwd TEXT NOT NULL,
+		branch TEXT NOT NULL,
+		agent TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "claude-cli", Backend: "anthropic", CLI: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Backend != "anthropic" || got.CLI != "claude" {
+		t.Fatalf("metadata columns were not migrated: %+v", got)
 	}
 }
 

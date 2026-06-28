@@ -24,11 +24,14 @@ type Store struct {
 }
 
 type CreateSessionParams struct {
-	Repo   string
-	CWD    string
-	Branch string
-	Agent  string
-	Status string
+	Repo    string
+	CWD     string
+	Branch  string
+	Agent   string
+	Backend string
+	CLI     string
+	Model   string
+	Status  string
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -87,7 +90,42 @@ func (s *Store) init(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "backend", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "cli", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Store) addColumnIfMissing(ctx context.Context, table, column, definition string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition)
+	return err
 }
 
 func (s *Store) CreateSession(ctx context.Context, params CreateSessionParams) (protocol.Session, error) {
@@ -104,13 +142,16 @@ func (s *Store) CreateSession(ctx context.Context, params CreateSessionParams) (
 		CWD:       params.CWD,
 		Branch:    params.Branch,
 		Agent:     params.Agent,
+		Backend:   params.Backend,
+		CLI:       params.CLI,
+		Model:     params.Model,
 		Status:    params.Status,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id, repo, cwd, branch, agent, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.Repo, session.CWD, session.Branch, session.Agent, session.Status, formatTime(session.CreatedAt), formatTime(session.UpdatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id, repo, cwd, branch, agent, backend, cli, model, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.Repo, session.CWD, session.Branch, session.Agent, session.Backend, session.CLI, session.Model, session.Status, formatTime(session.CreatedAt), formatTime(session.UpdatedAt))
 	if err != nil {
 		return protocol.Session{}, err
 	}
@@ -118,10 +159,10 @@ func (s *Store) CreateSession(ctx context.Context, params CreateSessionParams) (
 }
 
 func (s *Store) GetSession(ctx context.Context, id string) (protocol.Session, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, repo, cwd, branch, agent, status, created_at, updated_at FROM sessions WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, repo, cwd, branch, agent, backend, cli, model, status, created_at, updated_at FROM sessions WHERE id = ?`, id)
 	var session protocol.Session
 	var createdAt, updatedAt string
-	if err := row.Scan(&session.ID, &session.Repo, &session.CWD, &session.Branch, &session.Agent, &session.Status, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&session.ID, &session.Repo, &session.CWD, &session.Branch, &session.Agent, &session.Backend, &session.CLI, &session.Model, &session.Status, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return protocol.Session{}, ErrNotFound
 		}
@@ -130,6 +171,21 @@ func (s *Store) GetSession(ctx context.Context, id string) (protocol.Session, er
 	session.CreatedAt = parseTime(createdAt)
 	session.UpdatedAt = parseTime(updatedAt)
 	return session, nil
+}
+
+func (s *Store) SetSessionModel(ctx context.Context, sessionID, model string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?`, model, formatTime(time.Now().UTC()), sessionID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) SetSessionStatus(ctx context.Context, sessionID, status string) error {

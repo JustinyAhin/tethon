@@ -139,11 +139,13 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, err := s.store.CreateSession(r.Context(), sessionlog.CreateSessionParams{
-		Repo:   normalizedReq.Repo,
-		CWD:    normalizedReq.CWD,
-		Branch: normalizedReq.Branch,
-		Agent:  normalizedReq.Agent,
-		Status: "running",
+		Repo:    normalizedReq.Repo,
+		CWD:     normalizedReq.CWD,
+		Branch:  normalizedReq.Branch,
+		Agent:   normalizedReq.Agent,
+		Backend: agentBackend(normalizedReq.Agent),
+		CLI:     agentCLI(normalizedReq.Agent),
+		Status:  "running",
 	})
 	if err != nil {
 		s.logger.Error("session_create_failed", "agent", normalizedReq.Agent, "repo", normalizedReq.Repo, "cwd", normalizedReq.CWD, "error", err.Error())
@@ -491,6 +493,32 @@ func (s sessionSink) ResolveApproval(ctx context.Context, requestID, action stri
 
 func (s sessionSink) SetSessionStatus(ctx context.Context, status string) error {
 	return s.s.store.SetSessionStatus(ctx, s.sessionID, status)
+}
+
+func (s sessionSink) SetSessionModel(ctx context.Context, model string) error {
+	return s.s.store.SetSessionModel(ctx, s.sessionID, model)
+}
+
+func agentBackend(agentName string) string {
+	switch agentName {
+	case "claude-cli":
+		return "anthropic"
+	case "fake":
+		return "fake"
+	default:
+		return ""
+	}
+}
+
+func agentCLI(agentName string) string {
+	switch agentName {
+	case "claude-cli":
+		return "claude"
+	case "fake":
+		return "fake"
+	default:
+		return ""
+	}
 }
 
 func writeSSE(w http.ResponseWriter, event protocol.Event) error {

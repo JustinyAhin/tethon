@@ -42,6 +42,7 @@ type Sink interface {
 	CreatePendingApproval(context.Context, string, any) error
 	ResolveApproval(context.Context, string, string) error
 	SetSessionStatus(context.Context, string) error
+	SetSessionModel(context.Context, string) error
 }
 
 type Registry struct {

@@ -190,6 +190,7 @@ type claudeSession struct {
 	process         CommandProcess
 	turnDone        chan struct{}
 	claudeSessionID string
+	model           string
 	pending         map[string]claudeApproval
 }
 
@@ -433,6 +434,11 @@ func (s *claudeSession) handleClaudeEvent(ctx context.Context, event claudeStrea
 	if event.SessionID != "" {
 		s.setClaudeSessionID(event.SessionID)
 	}
+	if model := event.model(); model != "" {
+		if err := s.setModel(ctx, model); err != nil {
+			return claudeTurnContinue, err
+		}
+	}
 	switch event.Type {
 	case "system":
 		return claudeTurnContinue, nil
@@ -449,6 +455,11 @@ func (s *claudeSession) handleClaudeEvent(ctx context.Context, event claudeStrea
 	case "result":
 		if event.SessionID != "" {
 			s.setClaudeSessionID(event.SessionID)
+		}
+		if event.Usage != nil {
+			if err := s.emitUsage(ctx, event.Usage); err != nil {
+				return claudeTurnContinue, err
+			}
 		}
 		if approval, ok := event.approval(); ok {
 			if err := s.createApproval(ctx, approval); err != nil {
@@ -483,6 +494,42 @@ func (s *claudeSession) setClaudeSessionID(id string) {
 	s.mu.Lock()
 	s.claudeSessionID = id
 	s.mu.Unlock()
+}
+
+func (s *claudeSession) setModel(ctx context.Context, model string) error {
+	s.mu.Lock()
+	if s.model == model {
+		s.mu.Unlock()
+		return nil
+	}
+	s.model = model
+	s.mu.Unlock()
+	return s.sink.SetSessionModel(ctx, model)
+}
+
+func (s *claudeSession) currentModel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.model
+}
+
+func (s *claudeSession) emitUsage(ctx context.Context, usage *claudeUsage) error {
+	tokens := usage.tokens()
+	if tokens == (protocol.UsageTokens{}) {
+		return nil
+	}
+	model := s.currentModel()
+	payload := protocol.UsagePayload{
+		Agent:   "claude-cli",
+		Backend: "anthropic",
+		CLI:     "claude",
+		Model:   model,
+		Tokens:  tokens,
+		Cost:    estimateAnthropicCost(model, tokens),
+		Raw:     &protocol.UsageRawInfo{ProviderUsagePresent: true},
+	}
+	_, err := s.sink.AppendEvent(ctx, protocol.EventUsage, payload)
+	return err
 }
 
 func (s *claudeSession) createApproval(ctx context.Context, approval claudeApproval) error {
@@ -595,16 +642,19 @@ type claudeStreamEvent struct {
 	Subtype           string              `json:"subtype"`
 	SessionID         string              `json:"session_id"`
 	RequestID         string              `json:"request_id"`
+	Model             string              `json:"model"`
 	Message           claudeMessage       `json:"message"`
 	Result            string              `json:"result"`
 	IsError           bool                `json:"is_error"`
 	StopReason        string              `json:"stop_reason"`
+	Usage             *claudeUsage        `json:"usage"`
 	PermissionDenials []claudeToolRequest `json:"permission_denials"`
 	DeferredToolUse   *claudeToolRequest  `json:"deferred_tool_use"`
 }
 
 type claudeMessage struct {
 	Content []claudeContentBlock `json:"content"`
+	Model   string               `json:"model"`
 }
 
 type claudeContentBlock struct {
@@ -623,6 +673,42 @@ type claudeToolRequest struct {
 	Input   json.RawMessage `json:"input"`
 	Command string          `json:"command"`
 	Reason  string          `json:"reason"`
+}
+
+type claudeUsage struct {
+	InputTokens              int64 `json:"input_tokens"`
+	OutputTokens             int64 `json:"output_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreation            struct {
+		Ephemeral5mInputTokens int64 `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1hInputTokens int64 `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+}
+
+func (u claudeUsage) tokens() protocol.UsageTokens {
+	cacheWrite5m := u.CacheCreation.Ephemeral5mInputTokens
+	if cacheWrite5m == 0 {
+		cacheWrite5m = u.CacheCreationInputTokens
+	}
+	cacheWrite1h := u.CacheCreation.Ephemeral1hInputTokens
+	tokens := protocol.UsageTokens{
+		Input:        u.InputTokens,
+		Output:       u.OutputTokens,
+		CacheRead:    u.CacheReadInputTokens,
+		CacheWrite:   u.CacheCreationInputTokens,
+		CacheWrite5m: cacheWrite5m,
+		CacheWrite1h: cacheWrite1h,
+	}
+	tokens.TotalBillable = tokens.Input + tokens.Output + tokens.CacheRead + tokens.CacheWrite5m + tokens.CacheWrite1h
+	return tokens
+}
+
+func (e claudeStreamEvent) model() string {
+	if e.Model != "" {
+		return e.Model
+	}
+	return e.Message.Model
 }
 
 func (e claudeStreamEvent) assistantText() []string {
