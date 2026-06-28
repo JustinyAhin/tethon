@@ -24,9 +24,11 @@ type Store struct {
 }
 
 type CreateSessionParams struct {
+	RepoID  string
 	Repo    string
 	CWD     string
 	Branch  string
+	BaseRef string
 	Agent   string
 	Backend string
 	CLI     string
@@ -99,6 +101,15 @@ func (s *Store) init(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "sessions", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "repo_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "base_ref", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "worktree_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -138,9 +149,11 @@ func (s *Store) CreateSession(ctx context.Context, params CreateSessionParams) (
 	now := time.Now().UTC()
 	session := protocol.Session{
 		ID:        newID("ses"),
+		RepoID:    params.RepoID,
 		Repo:      params.Repo,
 		CWD:       params.CWD,
 		Branch:    params.Branch,
+		BaseRef:   params.BaseRef,
 		Agent:     params.Agent,
 		Backend:   params.Backend,
 		CLI:       params.CLI,
@@ -149,20 +162,38 @@ func (s *Store) CreateSession(ctx context.Context, params CreateSessionParams) (
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id, repo, cwd, branch, agent, backend, cli, model, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.Repo, session.CWD, session.Branch, session.Agent, session.Backend, session.CLI, session.Model, session.Status, formatTime(session.CreatedAt), formatTime(session.UpdatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id, repo_id, repo, cwd, branch, base_ref, worktree_path, agent, backend, cli, model, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.RepoID, session.Repo, session.CWD, session.Branch, session.BaseRef, session.WorktreePath, session.Agent, session.Backend, session.CLI, session.Model, session.Status, formatTime(session.CreatedAt), formatTime(session.UpdatedAt))
 	if err != nil {
 		return protocol.Session{}, err
 	}
 	return session, nil
 }
 
+// SetSessionWorktree records the worktree path and branch chosen for a session
+// once the host daemon has created the worktree.
+func (s *Store) SetSessionWorktree(ctx context.Context, sessionID, worktreePath, branch string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET worktree_path = ?, branch = ?, updated_at = ? WHERE id = ?`,
+		worktreePath, branch, formatTime(time.Now().UTC()), sessionID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetSession(ctx context.Context, id string) (protocol.Session, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, repo, cwd, branch, agent, backend, cli, model, status, created_at, updated_at FROM sessions WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, repo_id, repo, cwd, branch, base_ref, worktree_path, agent, backend, cli, model, status, created_at, updated_at FROM sessions WHERE id = ?`, id)
 	var session protocol.Session
 	var createdAt, updatedAt string
-	if err := row.Scan(&session.ID, &session.Repo, &session.CWD, &session.Branch, &session.Agent, &session.Backend, &session.CLI, &session.Model, &session.Status, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&session.ID, &session.RepoID, &session.Repo, &session.CWD, &session.Branch, &session.BaseRef, &session.WorktreePath, &session.Agent, &session.Backend, &session.CLI, &session.Model, &session.Status, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return protocol.Session{}, ErrNotFound
 		}

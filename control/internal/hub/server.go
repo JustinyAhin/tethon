@@ -305,6 +305,7 @@ func (s *Server) summary(hostID string) protocol.HostSummary {
 		URL:       record.URL,
 		Agents:    record.Agents,
 		RepoRoots: record.RepoRoots,
+		Repos:     record.Repos,
 		LastSeen:  record.LastSeen,
 		Online:    s.isOnline(record),
 	}

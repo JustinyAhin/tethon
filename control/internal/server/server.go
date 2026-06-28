@@ -15,13 +15,17 @@ import (
 
 	"tethon/internal/agent"
 	"tethon/internal/protocol"
+	"tethon/internal/repo"
 	"tethon/internal/sessionlog"
+	"tethon/internal/worktree"
 )
 
 type Server struct {
 	store     *sessionlog.Store
 	broker    *broker
 	agents    *agent.Registry
+	repos     *repo.Registry
+	worktrees *worktree.Manager
 	repoRoots []string
 	logger    *slog.Logger
 	running   map[string]agent.RunningSession
@@ -30,6 +34,8 @@ type Server struct {
 
 type Config struct {
 	Agents    *agent.Registry
+	Repos     *repo.Registry
+	Worktrees *worktree.Manager
 	RepoRoots []string
 	Logger    *slog.Logger
 }
@@ -69,6 +75,8 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 		store:     store,
 		broker:    newBroker(),
 		agents:    agents,
+		repos:     config.Repos,
+		worktrees: config.Worktrees,
 		repoRoots: repoRoots,
 		logger:    logger,
 		running:   make(map[string]agent.RunningSession),
@@ -82,26 +90,67 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-func (s *Server) normalizeCreateRequest(req protocol.CreateSessionRequest) (protocol.CreateSessionRequest, error) {
-	repo, err := normalizeExistingDir(req.Repo)
-	if err != nil {
-		return protocol.CreateSessionRequest{}, fmt.Errorf("repo must be an existing directory")
-	}
-	realRepo, err := filepath.EvalSymlinks(repo)
-	if err != nil {
-		return protocol.CreateSessionRequest{}, fmt.Errorf("repo must be an existing directory")
-	}
-	if len(s.repoRoots) > 0 && !pathWithinAny(realRepo, s.repoRoots) {
-		return protocol.CreateSessionRequest{}, fmt.Errorf("repo must be inside an advertised repo root")
+// resolvedRepo is the outcome of mapping a create request to a concrete repo
+// and working tree on disk.
+type resolvedRepo struct {
+	repoID   string
+	repoPath string
+	cwd      string
+	baseRef  string
+}
+
+// resolveRepo maps a create request to a registered repo (by id or by path).
+// When no registry is configured (legacy/tests), it falls back to validating
+// the raw repo path against advertised roots and no worktree is used.
+func (s *Server) resolveRepo(req protocol.CreateSessionRequest) (resolvedRepo, error) {
+	if s.repos == nil {
+		if req.Repo == "" {
+			return resolvedRepo{}, fmt.Errorf("repo is required")
+		}
+		realRepo, err := resolveRealDir(req.Repo)
+		if err != nil {
+			return resolvedRepo{}, fmt.Errorf("repo must be an existing directory")
+		}
+		if len(s.repoRoots) > 0 && !pathWithinAny(realRepo, s.repoRoots) {
+			return resolvedRepo{}, fmt.Errorf("repo must be inside an advertised repo root")
+		}
+		cwd, err := normalizeCWD(realRepo, req.CWD)
+		if err != nil {
+			return resolvedRepo{}, err
+		}
+		return resolvedRepo{repoPath: realRepo, cwd: cwd, baseRef: req.BaseRef}, nil
 	}
 
-	cwd, err := normalizeCWD(realRepo, req.CWD)
-	if err != nil {
-		return protocol.CreateSessionRequest{}, err
+	var rp repo.Repo
+	var ok bool
+	switch {
+	case req.RepoID != "":
+		rp, ok = s.repos.Get(req.RepoID)
+		if !ok {
+			return resolvedRepo{}, fmt.Errorf("unknown repo_id")
+		}
+	case req.Repo != "":
+		realRepo, err := resolveRealDir(req.Repo)
+		if err != nil {
+			return resolvedRepo{}, fmt.Errorf("repo must be an existing directory")
+		}
+		rp, ok = s.repos.Find(realRepo)
+		if !ok {
+			return resolvedRepo{}, fmt.Errorf("repo must be a registered repository")
+		}
+	default:
+		return resolvedRepo{}, fmt.Errorf("repo_id or repo is required")
 	}
-	req.Repo = realRepo
-	req.CWD = cwd
-	return req, nil
+
+	cwd, err := normalizeCWD(rp.Path, req.CWD)
+	if err != nil {
+		return resolvedRepo{}, err
+	}
+	baseRef := req.BaseRef
+	if baseRef == "" {
+		baseRef = rp.DefaultBranch
+	}
+	return resolvedRepo{repoID: rp.ID, repoPath: rp.Path, cwd: cwd, baseRef: baseRef}, nil
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -116,48 +165,83 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if req.Repo == "" {
-		s.logger.Warn("session_create_rejected", "agent", req.Agent, "reason", "repo is required")
-		writeError(w, http.StatusBadRequest, "repo is required")
-		return
-	}
 	if req.Agent == "" {
 		req.Agent = "fake"
 	}
 	adapter, ok := s.agents.Get(req.Agent)
 	if !ok {
-		s.logger.Warn("session_create_rejected", "agent", req.Agent, "repo", req.Repo, "cwd", req.CWD, "reason", "unknown agent")
+		s.logger.Warn("session_create_rejected", "agent", req.Agent, "repo_id", req.RepoID, "repo", req.Repo, "cwd", req.CWD, "reason", "unknown agent")
 		writeError(w, http.StatusBadRequest, "unknown agent")
 		return
 	}
 
-	normalizedReq, err := s.normalizeCreateRequest(req)
+	resolved, err := s.resolveRepo(req)
 	if err != nil {
-		s.logger.Warn("session_create_rejected", "agent", req.Agent, "repo", req.Repo, "cwd", req.CWD, "reason", err.Error())
+		s.logger.Warn("session_create_rejected", "agent", req.Agent, "repo_id", req.RepoID, "repo", req.Repo, "cwd", req.CWD, "reason", err.Error())
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	session, err := s.store.CreateSession(r.Context(), sessionlog.CreateSessionParams{
-		Repo:    normalizedReq.Repo,
-		CWD:     normalizedReq.CWD,
-		Branch:  normalizedReq.Branch,
-		Agent:   normalizedReq.Agent,
-		Backend: agentBackend(normalizedReq.Agent),
-		CLI:     agentCLI(normalizedReq.Agent),
+		RepoID:  resolved.repoID,
+		Repo:    resolved.repoPath,
+		CWD:     resolved.cwd,
+		Branch:  req.Branch,
+		BaseRef: resolved.baseRef,
+		Agent:   req.Agent,
+		Backend: agentBackend(req.Agent),
+		CLI:     agentCLI(req.Agent),
 		Status:  "running",
 	})
 	if err != nil {
-		s.logger.Error("session_create_failed", "agent", normalizedReq.Agent, "repo", normalizedReq.Repo, "cwd", normalizedReq.CWD, "error", err.Error())
+		s.logger.Error("session_create_failed", "agent", req.Agent, "repo", resolved.repoPath, "cwd", resolved.cwd, "error", err.Error())
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.logger.Info("session_create_accepted", "session_id", session.ID, "agent", session.Agent, "repo", session.Repo, "cwd", session.CWD, "status", session.Status)
+	s.logger.Info("session_create_accepted", "session_id", session.ID, "agent", session.Agent, "repo_id", resolved.repoID, "repo", session.Repo, "cwd", session.CWD, "status", session.Status)
 
-	running, err := adapter.Start(r.Context(), agent.StartRequest{Session: session, Create: normalizedReq}, s.sink(session.ID))
+	workDir := joinCWD(resolved.repoPath, resolved.cwd)
+	if s.worktrees != nil && resolved.repoID != "" {
+		wt, err := s.worktrees.Create(r.Context(), worktree.CreateOptions{
+			ID:       session.ID,
+			RepoID:   resolved.repoID,
+			RepoPath: resolved.repoPath,
+			BaseRef:  resolved.baseRef,
+			Branch:   req.Branch,
+		})
+		if err != nil {
+			_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
+			_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
+			s.logger.Error("session_worktree_failed", "session_id", session.ID, "repo_id", resolved.repoID, "error", err.Error())
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := s.store.SetSessionWorktree(r.Context(), session.ID, wt.Path, wt.Branch); err != nil {
+			s.logger.Error("session_worktree_persist_failed", "session_id", session.ID, "error", err.Error())
+		}
+		session.WorktreePath = wt.Path
+		session.Branch = wt.Branch
+		workDir = joinCWD(wt.Path, resolved.cwd)
+		s.logger.Info("session_worktree_created", "session_id", session.ID, "repo_id", resolved.repoID, "worktree", wt.Path, "branch", wt.Branch)
+	}
+
+	// The session_started event records the resolved repo/cwd, not the raw
+	// request, so clients see where the agent actually runs.
+	createForEvent := req
+	createForEvent.RepoID = resolved.repoID
+	createForEvent.Repo = resolved.repoPath
+	createForEvent.CWD = resolved.cwd
+	createForEvent.BaseRef = resolved.baseRef
+
+	running, err := adapter.Start(r.Context(), agent.StartRequest{Session: session, Create: createForEvent, WorkDir: workDir}, s.sink(session.ID))
 	if err != nil {
 		_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
 		_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
+		if s.worktrees != nil && session.WorktreePath != "" {
+			if removeErr := s.worktrees.Remove(context.Background(), session.ID); removeErr != nil {
+				s.logger.Warn("session_worktree_cleanup_failed", "session_id", session.ID, "error", removeErr.Error())
+			}
+		}
 		s.logger.Error("session_agent_start_failed", "session_id", session.ID, "agent", session.Agent, "error", err.Error())
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -166,6 +250,24 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("session_agent_started", "session_id", session.ID, "agent", session.Agent)
 
 	writeJSON(w, http.StatusCreated, protocol.CreateSessionResponse{ID: session.ID, Status: session.Status})
+}
+
+// resolveRealDir validates that path is an existing directory and resolves it
+// through any symlinks, matching how repo paths are normalized at registration.
+func resolveRealDir(path string) (string, error) {
+	clean, err := normalizeExistingDir(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(clean)
+}
+
+// joinCWD appends a repo-relative cwd to a base directory.
+func joinCWD(base, cwd string) string {
+	if cwd == "" {
+		return base
+	}
+	return filepath.Join(base, cwd)
 }
 
 func normalizeExistingDir(path string) (string, error) {

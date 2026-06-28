@@ -25,26 +25,31 @@ type Event struct {
 }
 
 type Session struct {
-	ID        string    `json:"id"`
-	Repo      string    `json:"repo"`
-	CWD       string    `json:"cwd"`
-	Branch    string    `json:"branch"`
-	Agent     string    `json:"agent"`
-	Backend   string    `json:"backend,omitempty"`
-	CLI       string    `json:"cli,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	RepoID       string    `json:"repo_id,omitempty"`
+	Repo         string    `json:"repo"`
+	CWD          string    `json:"cwd"`
+	Branch       string    `json:"branch"`
+	BaseRef      string    `json:"base_ref,omitempty"`
+	WorktreePath string    `json:"worktree_path,omitempty"`
+	Agent        string    `json:"agent"`
+	Backend      string    `json:"backend,omitempty"`
+	CLI          string    `json:"cli,omitempty"`
+	Model        string    `json:"model,omitempty"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type CreateSessionRequest struct {
-	HostID string `json:"host_id,omitempty"`
-	Repo   string `json:"repo"`
-	CWD    string `json:"cwd"`
-	Branch string `json:"branch"`
-	Agent  string `json:"agent"`
-	Prompt string `json:"prompt,omitempty"`
+	HostID  string `json:"host_id,omitempty"`
+	RepoID  string `json:"repo_id,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	CWD     string `json:"cwd"`
+	Branch  string `json:"branch"`
+	BaseRef string `json:"base_ref,omitempty"`
+	Agent   string `json:"agent"`
+	Prompt  string `json:"prompt,omitempty"`
 }
 
 type CreateSessionResponse struct {
@@ -52,22 +57,32 @@ type CreateSessionResponse struct {
 	Status string `json:"status"`
 }
 
+// RepoInfo advertises a host-registered repository to clients.
+type RepoInfo struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	DefaultBranch string `json:"default_branch,omitempty"`
+}
+
 type RegisterHostRequest struct {
-	HostID    string   `json:"host_id"`
-	Name      string   `json:"name"`
-	URL       string   `json:"url"`
-	Agents    []string `json:"agents"`
-	RepoRoots []string `json:"repo_roots"`
+	HostID    string     `json:"host_id"`
+	Name      string     `json:"name"`
+	URL       string     `json:"url"`
+	Agents    []string   `json:"agents"`
+	RepoRoots []string   `json:"repo_roots"`
+	Repos     []RepoInfo `json:"repos,omitempty"`
 }
 
 type HostSummary struct {
-	HostID    string    `json:"host_id"`
-	Name      string    `json:"name"`
-	URL       string    `json:"url"`
-	Agents    []string  `json:"agents"`
-	RepoRoots []string  `json:"repo_roots"`
-	LastSeen  time.Time `json:"last_seen"`
-	Online    bool      `json:"online"`
+	HostID    string     `json:"host_id"`
+	Name      string     `json:"name"`
+	URL       string     `json:"url"`
+	Agents    []string   `json:"agents"`
+	RepoRoots []string   `json:"repo_roots"`
+	Repos     []RepoInfo `json:"repos,omitempty"`
+	LastSeen  time.Time  `json:"last_seen"`
+	Online    bool       `json:"online"`
 }
 
 type InputRequest struct {

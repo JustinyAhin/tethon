@@ -1,31 +1,27 @@
 package main
 
 import (
-	"path/filepath"
 	"testing"
+
+	"tethon/internal/repo"
 )
 
-func TestNormalizeRepoRoots(t *testing.T) {
-	root := t.TempDir()
-	roots, err := normalizeRepoRoots([]string{root, filepath.Join(root, ".")})
+func TestRepoInfos(t *testing.T) {
+	registry, err := repo.NewRegistry(
+		repo.Repo{ID: "alpha", Name: "alpha", Path: "/repos/alpha", DefaultBranch: "main"},
+		repo.Repo{ID: "beta", Name: "beta", Path: "/repos/beta"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(roots) != 1 {
-		t.Fatalf("expected duplicate roots to collapse, got %v", roots)
+	infos := repoInfos(registry)
+	if len(infos) != 2 {
+		t.Fatalf("expected 2 repo infos, got %d", len(infos))
 	}
-	want, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		t.Fatal(err)
+	if infos[0].ID != "alpha" || infos[0].Path != "/repos/alpha" || infos[0].DefaultBranch != "main" {
+		t.Fatalf("unexpected first repo info: %+v", infos[0])
 	}
-	if roots[0] != want {
-		t.Fatalf("root = %q, want %q", roots[0], want)
-	}
-}
-
-func TestNormalizeRepoRootsRejectsMissingRoot(t *testing.T) {
-	_, err := normalizeRepoRoots([]string{filepath.Join(t.TempDir(), "missing")})
-	if err == nil {
-		t.Fatal("expected missing root error")
+	if infos[1].ID != "beta" {
+		t.Fatalf("unexpected second repo info: %+v", infos[1])
 	}
 }

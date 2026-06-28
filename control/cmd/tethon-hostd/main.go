@@ -18,8 +18,10 @@ import (
 
 	"tethon/internal/agent"
 	"tethon/internal/protocol"
+	"tethon/internal/repo"
 	"tethon/internal/server"
 	"tethon/internal/sessionlog"
+	"tethon/internal/worktree"
 )
 
 type repoRootsFlag []string
@@ -55,19 +57,33 @@ func run() error {
 	hostID := flag.String("host-id", sanitizeHostID(hostname), "host id")
 	name := flag.String("name", hostname, "host display name")
 	allowAnthropicAPIKey := flag.Bool("allow-anthropic-api-key", false, "allow claude-cli sessions while ANTHROPIC_API_KEY is set")
+	worktreeRoot := flag.String("worktree-root", "", "directory for per-session worktrees (default: <db dir>/worktrees)")
 	var repoRoots repoRootsFlag
 	flag.Var(&repoRoots, "repo-root", "repo root to advertise; repeatable")
 	flag.Parse()
 	if len(repoRoots) == 0 {
 		repoRoots = append(repoRoots, cwd)
 	}
-	normalizedRepoRoots, err := normalizeRepoRoots(repoRoots)
+	ctx := context.Background()
+	repos, err := repo.Discover(ctx, repoRoots)
 	if err != nil {
 		return err
 	}
+	registry, err := repo.NewRegistry(repos...)
+	if err != nil {
+		return err
+	}
+	wtRoot := *worktreeRoot
+	if wtRoot == "" {
+		wtRoot = filepath.Join(filepath.Dir(*dbPath), "worktrees")
+	}
+	if wtRoot, err = filepath.Abs(wtRoot); err != nil {
+		return err
+	}
+	worktrees := worktree.NewManager(wtRoot)
 	logger := slog.Default()
 
-	store, err := sessionlog.Open(context.Background(), *dbPath)
+	store, err := sessionlog.Open(ctx, *dbPath)
 	if err != nil {
 		return err
 	}
@@ -86,7 +102,8 @@ func run() error {
 		Name:      *name,
 		URL:       hostURL,
 		Agents:    agentRegistry.Names(),
-		RepoRoots: normalizedRepoRoots,
+		RepoRoots: registry.Paths(),
+		Repos:     repoInfos(registry),
 	}
 	if err := registerHost(*hubURL, registerReq); err != nil {
 		log.Printf("initial host registration failed: %v", err)
@@ -95,40 +112,27 @@ func run() error {
 
 	srv := &http.Server{Addr: *addr, Handler: server.NewWithConfig(store, server.Config{
 		Agents:    agentRegistry,
-		RepoRoots: normalizedRepoRoots,
+		Repos:     registry,
+		Worktrees: worktrees,
+		RepoRoots: registry.Paths(),
 		Logger:    logger,
 	}).Handler()}
 	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
 	return srv.ListenAndServe()
 }
 
-func normalizeRepoRoots(values []string) ([]string, error) {
-	roots := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		abs, err := filepath.Abs(value)
-		if err != nil {
-			return nil, err
-		}
-		realPath, err := filepath.EvalSymlinks(abs)
-		if err != nil {
-			return nil, fmt.Errorf("repo root %q: %w", value, err)
-		}
-		info, err := os.Stat(realPath)
-		if err != nil {
-			return nil, fmt.Errorf("repo root %q: %w", value, err)
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("repo root %q is not a directory", value)
-		}
-		clean := filepath.Clean(realPath)
-		if _, ok := seen[clean]; ok {
-			continue
-		}
-		seen[clean] = struct{}{}
-		roots = append(roots, clean)
+func repoInfos(registry *repo.Registry) []protocol.RepoInfo {
+	repos := registry.List()
+	infos := make([]protocol.RepoInfo, 0, len(repos))
+	for _, r := range repos {
+		infos = append(infos, protocol.RepoInfo{
+			ID:            r.ID,
+			Name:          r.Name,
+			Path:          r.Path,
+			DefaultBranch: r.DefaultBranch,
+		})
 	}
-	return roots, nil
+	return infos
 }
 
 func heartbeatLoop(hubURL string, req protocol.RegisterHostRequest) {

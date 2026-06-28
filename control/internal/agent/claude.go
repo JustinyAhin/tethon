@@ -164,7 +164,7 @@ func (a *claudeAdapter) Start(ctx context.Context, req StartRequest, sink Sink) 
 		adapter:   a,
 		sink:      sink,
 		sessionID: req.Session.ID,
-		workDir:   workingDir(req.Session.Repo, req.Session.CWD),
+		workDir:   resolveWorkDir(req),
 	}
 	if _, err := sink.AppendEvent(ctx, protocol.EventSessionStarted, req.Create); err != nil {
 		return nil, err
@@ -753,6 +753,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func resolveWorkDir(req StartRequest) string {
+	if req.WorkDir != "" {
+		return req.WorkDir
+	}
+	return workingDir(req.Session.Repo, req.Session.CWD)
 }
 
 func workingDir(repo, cwd string) string {

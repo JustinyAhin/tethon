@@ -22,6 +22,10 @@ type Capabilities struct {
 type StartRequest struct {
 	Session protocol.Session
 	Create  protocol.CreateSessionRequest
+	// WorkDir is the resolved directory the agent process should run in
+	// (the session's worktree, plus any cwd). Empty means the adapter falls
+	// back to deriving a directory from the session repo/cwd.
+	WorkDir string
 }
 
 type Adapter interface {
