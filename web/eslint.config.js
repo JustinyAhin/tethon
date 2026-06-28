@@ -34,8 +34,9 @@ export default defineConfig(
 		}
 	},
 	{
-		// Override or add rule settings here, such as:
-		// 'svelte/button-has-type': 'error'
-		rules: {}
+		rules: {
+			// Requiring resolve() on every internal href is noisy and misfires.
+			'svelte/no-navigation-without-resolve': 'off'
+		}
 	}
 );
