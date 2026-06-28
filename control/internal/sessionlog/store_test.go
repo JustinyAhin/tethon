@@ -174,6 +174,43 @@ func TestOpenMigratesSessionMetadataColumns(t *testing.T) {
 	}
 }
 
+func TestListSessionsByStatus(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	running, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake", Status: "running"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaiting, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake", Status: "awaiting_approval"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake", Status: "done"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.ListSessionsByStatus(ctx, "running", "awaiting_approval")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 active sessions, got %d", len(got))
+	}
+	ids := map[string]bool{got[0].ID: true, got[1].ID: true}
+	if !ids[running.ID] || !ids[awaiting.ID] {
+		t.Fatalf("unexpected sessions returned: %+v", got)
+	}
+
+	none, err := store.ListSessionsByStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected no rows for empty status set, got %d", len(none))
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))

@@ -110,13 +110,18 @@ func run() error {
 	}
 	go heartbeatLoop(*hubURL, registerReq)
 
-	srv := &http.Server{Addr: *addr, Handler: server.NewWithConfig(store, server.Config{
+	hostServer := server.NewWithConfig(store, server.Config{
 		Agents:    agentRegistry,
 		Repos:     registry,
 		Worktrees: worktrees,
 		RepoRoots: registry.Paths(),
 		Logger:    logger,
-	}).Handler()}
+	})
+	if err := hostServer.Recover(ctx); err != nil {
+		log.Printf("session recovery failed: %v", err)
+	}
+
+	srv := &http.Server{Addr: *addr, Handler: hostServer.Handler()}
 	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
 	return srv.ListenAndServe()
 }

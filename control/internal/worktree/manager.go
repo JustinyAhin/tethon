@@ -18,6 +18,13 @@ import (
 // ErrNotFound is returned when an operation references an unknown worktree.
 var ErrNotFound = errors.New("worktree not found")
 
+// ErrWorktreeExists is returned when an id is already tracked.
+var ErrWorktreeExists = errors.New("worktree already exists")
+
+// ErrBranchExists is returned when the requested branch is already present in
+// the repository (so it cannot be created for a new session).
+var ErrBranchExists = errors.New("branch already exists")
+
 // Worktree describes a single checked-out work-tree owned by a session.
 type Worktree struct {
 	ID      string // owning session id
@@ -62,12 +69,18 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (Worktree, err
 	_, exists := m.live[opts.ID]
 	m.mu.Unlock()
 	if exists {
-		return Worktree{}, fmt.Errorf("worktree %q already exists", opts.ID)
+		return Worktree{}, fmt.Errorf("%q: %w", opts.ID, ErrWorktreeExists)
 	}
 
 	branch := opts.Branch
 	if branch == "" {
 		branch = "tethon/" + opts.ID
+	}
+	// A session always branches onto a fresh ref. Reject an explicit branch that
+	// already exists rather than letting `git worktree add -b` fail opaquely —
+	// this is what enforces one session per branch/worktree.
+	if branchExists(ctx, opts.RepoPath, branch) {
+		return Worktree{}, fmt.Errorf("%q: %w", branch, ErrBranchExists)
 	}
 	dir := filepath.Join(m.root, opts.RepoID, opts.ID)
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
@@ -108,6 +121,15 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 	return nil
 }
 
+// Adopt records a worktree the daemon created in a previous run (recovered from
+// the session log) so it is tracked and can be cleaned up later. Adopting only
+// DB-recorded worktrees keeps removal limited to worktrees the daemon owns.
+func (m *Manager) Adopt(wt Worktree, repoPath string) {
+	m.mu.Lock()
+	m.live[wt.ID] = record{wt: wt, repoPath: repoPath}
+	m.mu.Unlock()
+}
+
 // Get returns the tracked worktree for an owner id.
 func (m *Manager) Get(id string) (Worktree, bool) {
 	m.mu.Lock()
@@ -125,6 +147,12 @@ func (m *Manager) List() []Worktree {
 		out = append(out, rec.wt)
 	}
 	return out
+}
+
+// branchExists reports whether refs/heads/<branch> is present in the repo.
+func branchExists(ctx context.Context, repoPath, branch string) bool {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return cmd.Run() == nil
 }
 
 func runGit(ctx context.Context, args ...string) error {

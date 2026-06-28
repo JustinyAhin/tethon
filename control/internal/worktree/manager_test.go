@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +59,59 @@ func TestManagerCreateIsolatesSessions(t *testing.T) {
 func TestManagerRemoveUnknown(t *testing.T) {
 	if err := NewManager(t.TempDir()).Remove(context.Background(), "nope"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestManagerCreateRejectsDuplicateID(t *testing.T) {
+	ctx := context.Background()
+	repo := initRepo(t)
+	mgr := NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	if _, err := mgr.Create(ctx, CreateOptions{ID: "ses", RepoID: "r", RepoPath: repo}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := mgr.Create(ctx, CreateOptions{ID: "ses", RepoID: "r", RepoPath: repo})
+	if !errors.Is(err, ErrWorktreeExists) {
+		t.Fatalf("expected ErrWorktreeExists, got %v", err)
+	}
+}
+
+func TestManagerCreateRejectsExistingBranch(t *testing.T) {
+	ctx := context.Background()
+	repo := initRepo(t)
+	if out, err := exec.Command("git", "-C", repo, "branch", "feature").CombinedOutput(); err != nil {
+		t.Fatalf("git branch: %v\n%s", err, out)
+	}
+	mgr := NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	_, err := mgr.Create(ctx, CreateOptions{ID: "ses", RepoID: "r", RepoPath: repo, Branch: "feature"})
+	if !errors.Is(err, ErrBranchExists) {
+		t.Fatalf("expected ErrBranchExists, got %v", err)
+	}
+}
+
+func TestManagerAdoptEnablesRemoval(t *testing.T) {
+	ctx := context.Background()
+	repo := initRepo(t)
+	root := filepath.Join(t.TempDir(), "worktrees")
+
+	// Create a worktree, then simulate a daemon restart with a fresh manager
+	// that only knows what the session log recorded.
+	created, err := NewManager(root).Create(ctx, CreateOptions{ID: "ses", RepoID: "r", RepoPath: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := NewManager(root)
+	if _, ok := fresh.Get("ses"); ok {
+		t.Fatal("fresh manager should not know the worktree before adoption")
+	}
+	fresh.Adopt(created, repo)
+	if _, ok := fresh.Get("ses"); !ok {
+		t.Fatal("worktree should be tracked after adoption")
+	}
+	if err := fresh.Remove(ctx, "ses"); err != nil {
+		t.Fatalf("remove adopted worktree: %v", err)
+	}
+	if _, err := os.Stat(created.Path); !os.IsNotExist(err) {
+		t.Fatalf("adopted worktree not removed: %v", err)
 	}
 }
 

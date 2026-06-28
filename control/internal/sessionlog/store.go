@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,14 +190,50 @@ func (s *Store) SetSessionWorktree(ctx context.Context, sessionID, worktreePath,
 	return nil
 }
 
+const sessionColumns = `id, repo_id, repo, cwd, branch, base_ref, worktree_path, agent, backend, cli, model, status, created_at, updated_at`
+
 func (s *Store) GetSession(ctx context.Context, id string) (protocol.Session, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, repo_id, repo, cwd, branch, base_ref, worktree_path, agent, backend, cli, model, status, created_at, updated_at FROM sessions WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, id)
+	session, err := scanSession(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return protocol.Session{}, ErrNotFound
+	}
+	return session, err
+}
+
+// ListSessionsByStatus returns sessions whose status is in the given set,
+// ordered oldest-first. With no statuses it returns nothing.
+func (s *Store) ListSessionsByStatus(ctx context.Context, statuses ...string) ([]protocol.Session, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]any, len(statuses))
+	for i, status := range statuses {
+		placeholders[i] = "?"
+		args[i] = status
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE status IN (`+strings.Join(placeholders, ", ")+`) ORDER BY created_at ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []protocol.Session
+	for rows.Next() {
+		session, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
+func scanSession(scanner eventScanner) (protocol.Session, error) {
 	var session protocol.Session
 	var createdAt, updatedAt string
-	if err := row.Scan(&session.ID, &session.RepoID, &session.Repo, &session.CWD, &session.Branch, &session.BaseRef, &session.WorktreePath, &session.Agent, &session.Backend, &session.CLI, &session.Model, &session.Status, &createdAt, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return protocol.Session{}, ErrNotFound
-		}
+	if err := scanner.Scan(&session.ID, &session.RepoID, &session.Repo, &session.CWD, &session.Branch, &session.BaseRef, &session.WorktreePath, &session.Agent, &session.Backend, &session.CLI, &session.Model, &session.Status, &createdAt, &updatedAt); err != nil {
 		return protocol.Session{}, err
 	}
 	session.CreatedAt = parseTime(createdAt)

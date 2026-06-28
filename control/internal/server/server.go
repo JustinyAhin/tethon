@@ -213,7 +213,13 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
 			_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
 			s.logger.Error("session_worktree_failed", "session_id", session.ID, "repo_id", resolved.repoID, "error", err.Error())
-			writeError(w, http.StatusInternalServerError, err.Error())
+			// A branch/worktree collision means another session owns it: that is a
+			// client conflict, not a server fault.
+			if errors.Is(err, worktree.ErrBranchExists) || errors.Is(err, worktree.ErrWorktreeExists) {
+				writeError(w, http.StatusConflict, err.Error())
+			} else {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
 			return
 		}
 		if err := s.store.SetSessionWorktree(r.Context(), session.ID, wt.Path, wt.Branch); err != nil {
@@ -247,6 +253,9 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setRunning(session.ID, running)
+	// If the agent reached a terminal state before setRunning ran (a fast
+	// goroutine), reconcile now so the map does not hold a dead session.
+	s.clearRunningIfTerminal(session.ID, running)
 	s.logger.Info("session_agent_started", "session_id", session.ID, "agent", session.Agent)
 
 	writeJSON(w, http.StatusCreated, protocol.CreateSessionResponse{ID: session.ID, Status: session.Status})
@@ -572,6 +581,70 @@ func (s *Server) clearRunningIfTerminal(sessionID string, running agent.RunningS
 	s.runningM.Unlock()
 }
 
+func (s *Server) clearRunning(sessionID string) {
+	s.runningM.Lock()
+	delete(s.running, sessionID)
+	s.runningM.Unlock()
+}
+
+// onSessionTerminal applies the cleanup policy when a session reaches a terminal
+// status. It fires for every terminal transition — including those that happen
+// asynchronously inside an agent goroutine — because the agent reports them
+// through SetSessionStatus on the sink.
+//
+// Policy: done/cancelled removes the worktree and its branch; error/interrupted
+// retains them so the failed work can be inspected.
+func (s *Server) onSessionTerminal(ctx context.Context, sessionID, status string) {
+	s.clearRunning(sessionID)
+	if s.worktrees == nil {
+		return
+	}
+	switch status {
+	case "done":
+		if err := s.worktrees.Remove(ctx, sessionID); err != nil && !errors.Is(err, worktree.ErrNotFound) {
+			s.logger.Warn("session_worktree_remove_failed", "session_id", sessionID, "error", err.Error())
+		}
+	case "error":
+		if wt, ok := s.worktrees.Get(sessionID); ok {
+			s.logger.Info("session_worktree_retained", "session_id", sessionID, "worktree", wt.Path, "branch", wt.Branch)
+		}
+	}
+}
+
+// Recover reconciles persisted state after a restart. Sessions left running or
+// awaiting approval when the daemon stopped have no live process, so they are
+// marked errored (interrupted) and their worktrees re-adopted so they are
+// tracked. It never deletes anything — interrupted work is retained for
+// inspection, consistent with the failure cleanup policy.
+func (s *Server) Recover(ctx context.Context) error {
+	sessions, err := s.store.ListSessionsByStatus(ctx, "running", "awaiting_approval")
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		if s.worktrees != nil && s.repos != nil && session.WorktreePath != "" && session.RepoID != "" {
+			if repo, ok := s.repos.Get(session.RepoID); ok {
+				if info, statErr := os.Stat(session.WorktreePath); statErr == nil && info.IsDir() {
+					s.worktrees.Adopt(worktree.Worktree{
+						ID:      session.ID,
+						RepoID:  session.RepoID,
+						Path:    session.WorktreePath,
+						Branch:  session.Branch,
+						BaseRef: session.BaseRef,
+					}, repo.Path)
+				}
+			}
+		}
+		_, _ = s.appendEvent(ctx, session.ID, protocol.EventError, protocol.ErrorPayload{Message: "daemon restarted; session interrupted"})
+		if err := s.store.SetSessionStatus(ctx, session.ID, "error"); err != nil {
+			s.logger.Warn("session_recover_failed", "session_id", session.ID, "error", err.Error())
+			continue
+		}
+		s.logger.Info("session_recovered_interrupted", "session_id", session.ID, "worktree", session.WorktreePath)
+	}
+	return nil
+}
+
 func (s *Server) sink(sessionID string) agent.Sink {
 	return sessionSink{s: s, sessionID: sessionID}
 }
@@ -594,7 +667,13 @@ func (s sessionSink) ResolveApproval(ctx context.Context, requestID, action stri
 }
 
 func (s sessionSink) SetSessionStatus(ctx context.Context, status string) error {
-	return s.s.store.SetSessionStatus(ctx, s.sessionID, status)
+	if err := s.s.store.SetSessionStatus(ctx, s.sessionID, status); err != nil {
+		return err
+	}
+	if status == "done" || status == "error" {
+		s.s.onSessionTerminal(ctx, s.sessionID, status)
+	}
+	return nil
 }
 
 func (s sessionSink) SetSessionModel(ctx context.Context, model string) error {
