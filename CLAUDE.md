@@ -40,3 +40,20 @@ The repo is empty beyond `kb/` — everything below is planned, built roughly in
   - `[infra]` — deploy, build, CI, scripts
   - `[chore]` — deps, tooling, internal scripts
 - Examples: `[proto] add cursor-based replay`, `[daemon] supervise agent with hard kill`, `[mobile] approval card actions`.
+
+<!-- BEGIN BEADS INTEGRATION -->
+## Issue Tracking
+
+This project uses `bd` (beads) for issue tracking (prefix `tethon`). Use it for all task tracking — not markdown TODO lists.
+
+- `bd ready` — find unblocked work
+- `bd create "Title" -t task -p 2` — create issue (`-t bug|feature|task|epic|chore`, `-p 0-4`)
+- `bd update <id> --claim` — claim a task before working it
+- `bd show <id>` — view details
+- `bd close <id> --reason "..."` — complete work
+- Link discovered work: `bd create "..." --deps discovered-from:<parent-id>`
+
+**Never close bd issues unless explicitly asked.** Finishing the work doesn't mean the ticket is done — the user decides when to close.
+
+Backend is Dolt with auto-commit to local Dolt history on each write; no manual export/import needed. There's no remote yet, so issues live locally for now.
+<!-- END BEADS INTEGRATION -->
