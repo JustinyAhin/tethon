@@ -57,5 +57,5 @@ This project uses `bd` (beads) for issue tracking (prefix `tethon`).
 There is no Dolt remote, so back up beads through git instead:
 
 - `bash scripts/beads-backup.sh` — export beads DB to `.beads-backup/` as git-tracked JSONL
-- Run before committing when issues have changed
+- **Only run this when explicitly told to.** Do not back up automatically after creating, updating, or closing tickets — wait for the user to ask.
 - Restore on a new machine with `bd init --prefix tethon --skip-hooks && bd backup restore .beads-backup/`
