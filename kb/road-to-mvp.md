@@ -97,6 +97,7 @@ Deliver:
 - One session per worktree.
 - Cleanup policy for completed, failed, and killed sessions.
 - Guardrails to avoid deleting non-owned worktrees.
+- Disk hygiene: shared dependency/build caches where safe, generated-artifact cleanup, and no accidental per-worktree cache bloat.
 
 Exit check:
 
@@ -104,6 +105,7 @@ Exit check:
 - Each runs in its own worktree.
 - Branch/file changes do not collide.
 - Killing one session does not affect the other.
+- Repeated short-lived sessions do not leave large generated artifacts or duplicated dependency caches behind.
 
 ## Phase 4 — Web companion v0
 
