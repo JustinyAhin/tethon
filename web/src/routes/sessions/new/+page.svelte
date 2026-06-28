@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { PersistedState } from 'runed';
+	import { PersistedState, watch } from 'runed';
 	import { getHosts } from '$lib/remote-functions/hosts.remote';
 	import { createSession } from '$lib/remote-functions/sessions.remote';
 
@@ -10,9 +10,12 @@
 	let selectedHostId = $state(page.url.searchParams.get('host') ?? lastHost.current);
 	let useRawRepo = $state(false);
 
-	$effect(() => {
-		lastHost.current = selectedHostId;
-	});
+	watch(
+		() => selectedHostId,
+		(id) => {
+			lastHost.current = id;
+		}
+	);
 
 	const onlineHosts = $derived((hosts.current ?? []).filter((h) => h.online));
 	const selectedHost = $derived(onlineHosts.find((h) => h.host_id === selectedHostId));
