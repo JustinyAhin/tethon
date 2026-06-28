@@ -9,12 +9,13 @@ General repo rules (git, commit tags, issue tracking, working principles, never 
 - **Package manager / runtime**: Bun (not npm/pnpm/yarn).
 - **Framework**: SvelteKit 2, **Svelte 5 with runes** (runes are forced on for project code — use `$state`/`$derived`/`$props`, not Svelte 4 reactive syntax).
 - **Deploy target**: Cloudflare Workers via `@sveltejs/adapter-cloudflare`; `wrangler` for types, preview, and deploy.
+- **Styling**: Tailwind CSS 4 — via the `@tailwindcss/vite` plugin, imported in `src/routes/layout.css` (`@import 'tailwindcss'`). No `tailwind.config` file; configure with `@theme` in CSS. `prettier-plugin-tailwindcss` sorts class lists on format.
 - **Language**: TypeScript, `strict` mode.
 - **Tooling**: Prettier + ESLint.
 
 Experimental SvelteKit features are on (see `vite.config.ts`): async (`await` in components), **remote functions**, explicit environment variables, and rendering-error handling. Keep them on.
 
-No database, no styling framework, no component library is set up yet — don't introduce one without it being asked for. This is a thin client over the hub, not a data app.
+No database and no component library is set up yet — don't introduce one without it being asked for. This is a thin client over the hub, not a data app.
 
 ## Documentation
 
