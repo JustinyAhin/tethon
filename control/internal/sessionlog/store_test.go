@@ -1,0 +1,118 @@
+package sessionlog
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"tethon/internal/protocol"
+)
+
+func TestAppendReplayOrdersEventsAfterCursor(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := store.AppendEvent(ctx, session.ID, protocol.EventOutput, protocol.OutputPayload{Text: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.AppendEvent(ctx, session.ID, protocol.EventOutput, protocol.OutputPayload{Text: "two"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := store.AppendEvent(ctx, session.ID, protocol.EventDone, map[string]string{"reason": "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first.Seq != 1 || second.Seq != 2 || third.Seq != 3 {
+		t.Fatalf("unexpected seqs: %d %d %d", first.Seq, second.Seq, third.Seq)
+	}
+
+	events, err := store.Replay(ctx, session.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].Seq != 2 || events[1].Seq != 3 {
+		t.Fatalf("unexpected replay seqs: %d %d", events[0].Seq, events[1].Seq)
+	}
+}
+
+func TestReplayPersistsAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "tethon.db")
+
+	store, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(ctx, session.ID, protocol.EventOutput, protocol.OutputPayload{Text: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+
+	events, err := reopened.Replay(ctx, session.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event after reopen, got %d", len(events))
+	}
+	if events[0].Seq != 1 || events[0].Type != protocol.EventOutput {
+		t.Fatalf("unexpected event after reopen: %+v", events[0])
+	}
+}
+
+func TestResolveApprovalRequiresPendingApproval(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := protocol.ApprovalPayload{RequestID: "req_1", Command: "test", Reason: "test"}
+	if err := store.CreatePendingApproval(ctx, session.ID, "req_1", payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ResolveApproval(ctx, session.ID, "req_1", "approve"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ResolveApproval(ctx, session.ID, "req_1", "deny"); err != ErrNotFound {
+		t.Fatalf("expected ErrNotFound for already resolved approval, got %v", err)
+	}
+}
+
+func newTestStore(t *testing.T) *Store {
+	t.Helper()
+	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	return store
+}
