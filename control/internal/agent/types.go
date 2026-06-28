@@ -1,0 +1,78 @@
+package agent
+
+import (
+	"context"
+	"sort"
+
+	"tethon/internal/protocol"
+)
+
+type Capabilities struct {
+	Stream           bool
+	InteractiveInput bool
+	Approvals        bool
+	Resume           bool
+}
+
+type StartRequest struct {
+	Session protocol.Session
+	Create  protocol.CreateSessionRequest
+}
+
+type Adapter interface {
+	Name() string
+	Capabilities() Capabilities
+	Start(context.Context, StartRequest, Sink) (RunningSession, error)
+}
+
+type RunningSession interface {
+	Input(context.Context, string) ([]protocol.Event, error)
+	ResolveApproval(context.Context, string, string, string) ([]protocol.Event, error)
+	Cancel(context.Context) error
+}
+
+type Sink interface {
+	AppendEvent(context.Context, string, any) (protocol.Event, error)
+	CreatePendingApproval(context.Context, string, any) error
+	ResolveApproval(context.Context, string, string) error
+	SetSessionStatus(context.Context, string) error
+}
+
+type Registry struct {
+	adapters map[string]Adapter
+}
+
+func NewRegistry(adapters ...Adapter) *Registry {
+	registry := &Registry{adapters: make(map[string]Adapter, len(adapters))}
+	for _, adapter := range adapters {
+		if adapter == nil || adapter.Name() == "" {
+			continue
+		}
+		registry.adapters[adapter.Name()] = adapter
+	}
+	return registry
+}
+
+func DefaultRegistry() *Registry {
+	return NewRegistry(NewFake())
+}
+
+func (r *Registry) Get(name string) (Adapter, bool) {
+	if r == nil {
+		return nil, false
+	}
+	adapter, ok := r.adapters[name]
+	return adapter, ok
+}
+
+func (r *Registry) Names() []string {
+	if r == nil {
+		return nil
+	}
+	names := make([]string, 0, len(r.adapters))
+	for name := range r.adapters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}

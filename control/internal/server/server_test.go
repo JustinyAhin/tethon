@@ -53,6 +53,69 @@ func TestApprovalLifecycleEmitsResolvedEvent(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventApprovalResolved, protocol.EventOutput})
 }
 
+func TestCreateSessionRejectsUnknownAgent(t *testing.T) {
+	ts := newTestServer(t)
+
+	body, err := json.Marshal(protocol.CreateSessionRequest{Repo: ".", Agent: "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(ts.URL+"/sessions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %s", resp.Status)
+	}
+}
+
+func TestFakeAgentInputDoneEmitsDone(t *testing.T) {
+	ts := newTestServer(t)
+
+	session := postSession(t, ts.URL)
+	postJSON(t, ts.URL+"/sessions/"+session.ID+"/input", protocol.InputRequest{Text: "done"})
+
+	events := streamEvents(t, ts.URL, session.ID, 3, 3)
+	assertSeqs(t, events, []int64{4, 5, 6})
+	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput, protocol.EventDone})
+}
+
+func TestInputForInactiveSessionReturnsConflict(t *testing.T) {
+	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	session, err := store.CreateSession(context.Background(), sessionlog.CreateSessionParams{
+		Repo:   ".",
+		Agent:  "fake",
+		Status: "running",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(New(store).Handler())
+	t.Cleanup(ts.Close)
+
+	body, err := json.Marshal(protocol.InputRequest{Text: "continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(ts.URL+"/sessions/"+session.ID+"/input", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409, got %s", resp.Status)
+	}
+}
+
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))

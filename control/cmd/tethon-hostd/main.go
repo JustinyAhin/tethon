@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"tethon/internal/agent"
 	"tethon/internal/protocol"
 	"tethon/internal/server"
 	"tethon/internal/sessionlog"
@@ -62,13 +63,14 @@ func run() error {
 		return err
 	}
 	defer store.Close()
+	agentRegistry := agent.DefaultRegistry()
 
 	hostURL := "http://" + *addr
 	registerReq := protocol.RegisterHostRequest{
 		HostID:    *hostID,
 		Name:      *name,
 		URL:       hostURL,
-		Agents:    []string{"fake"},
+		Agents:    agentRegistry.Names(),
 		RepoRoots: repoRoots,
 	}
 	if err := registerHost(*hubURL, registerReq); err != nil {
@@ -76,7 +78,7 @@ func run() error {
 	}
 	go heartbeatLoop(*hubURL, registerReq)
 
-	srv := &http.Server{Addr: *addr, Handler: server.New(store).Handler()}
+	srv := &http.Server{Addr: *addr, Handler: server.NewWithAgents(store, agentRegistry).Handler()}
 	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
 	return srv.ListenAndServe()
 }

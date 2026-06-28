@@ -8,18 +8,35 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
+	"tethon/internal/agent"
 	"tethon/internal/protocol"
 	"tethon/internal/sessionlog"
 )
 
 type Server struct {
-	store  *sessionlog.Store
-	broker *broker
+	store    *sessionlog.Store
+	broker   *broker
+	agents   *agent.Registry
+	running  map[string]agent.RunningSession
+	runningM sync.RWMutex
 }
 
 func New(store *sessionlog.Store) *Server {
-	return &Server{store: store, broker: newBroker()}
+	return NewWithAgents(store, agent.DefaultRegistry())
+}
+
+func NewWithAgents(store *sessionlog.Store, agents *agent.Registry) *Server {
+	if agents == nil {
+		agents = agent.DefaultRegistry()
+	}
+	return &Server{
+		store:   store,
+		broker:  newBroker(),
+		agents:  agents,
+		running: make(map[string]agent.RunningSession),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -47,8 +64,9 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	if req.Agent == "" {
 		req.Agent = "fake"
 	}
-	if req.Agent != "fake" {
-		writeError(w, http.StatusBadRequest, "only fake agent is supported")
+	adapter, ok := s.agents.Get(req.Agent)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "unknown agent")
 		return
 	}
 
@@ -64,10 +82,14 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.seedFakeSession(r.Context(), session.ID, req); err != nil {
+	running, err := adapter.Start(r.Context(), agent.StartRequest{Session: session, Create: req}, s.sink(session.ID))
+	if err != nil {
+		_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
+		_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.setRunning(session.ID, running)
 
 	writeJSON(w, http.StatusCreated, protocol.CreateSessionResponse{ID: session.ID, Status: session.Status})
 }
@@ -169,24 +191,16 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request, sessionID s
 		writeStoreError(w, err)
 		return
 	}
-
-	events, err := s.appendEvents(r.Context(), sessionID, []eventDraft{
-		{eventType: protocol.EventInputReceived, payload: protocol.InputReceivedPayload{Text: req.Text}},
-		{eventType: protocol.EventOutput, payload: protocol.OutputPayload{Text: "fake agent received: " + req.Text}},
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	running := s.getRunning(sessionID)
+	if running == nil {
+		writeError(w, http.StatusConflict, "session is not active")
 		return
 	}
 
-	if strings.EqualFold(req.Text, "done") || strings.EqualFold(req.Text, "finish") {
-		done, err := s.appendEvent(r.Context(), sessionID, protocol.EventDone, map[string]string{"reason": "fake agent finished"})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		events = append(events, done)
-		_ = s.store.SetSessionStatus(r.Context(), sessionID, "done")
+	events, err := running.Input(r.Context(), req.Text)
+	if err != nil {
+		writeAgentError(w, err)
+		return
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
@@ -206,55 +220,22 @@ func (s *Server) handleApproval(w http.ResponseWriter, r *http.Request, sessionI
 		writeError(w, http.StatusBadRequest, "text is required for reply")
 		return
 	}
-	if err := s.store.ResolveApproval(r.Context(), sessionID, requestID, req.Action); err != nil {
+	if _, err := s.store.GetSession(r.Context(), sessionID); err != nil {
 		writeStoreError(w, err)
 		return
 	}
+	running := s.getRunning(sessionID)
+	if running == nil {
+		writeError(w, http.StatusConflict, "session is not active")
+		return
+	}
 
-	events, err := s.appendEvents(r.Context(), sessionID, []eventDraft{
-		{eventType: protocol.EventApprovalResolved, payload: protocol.ApprovalResolvedPayload{RequestID: requestID, Action: req.Action, Text: req.Text}},
-		{eventType: protocol.EventOutput, payload: protocol.OutputPayload{Text: "fake approval resolved: " + req.Action}},
-	})
+	events, err := running.ResolveApproval(r.Context(), requestID, req.Action, req.Text)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeAgentError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
-}
-
-func (s *Server) seedFakeSession(ctx context.Context, sessionID string, req protocol.CreateSessionRequest) error {
-	requestID := "approval_bootstrap"
-	approval := protocol.ApprovalPayload{
-		RequestID: requestID,
-		Command:   "fake risky command",
-		Reason:    "proves pending approval state and replay",
-	}
-	if err := s.store.CreatePendingApproval(ctx, sessionID, requestID, approval); err != nil {
-		return err
-	}
-	_, err := s.appendEvents(ctx, sessionID, []eventDraft{
-		{eventType: protocol.EventSessionStarted, payload: req},
-		{eventType: protocol.EventOutput, payload: protocol.OutputPayload{Text: "fake agent ready"}},
-		{eventType: protocol.EventAwaitingApproval, payload: approval},
-	})
-	return err
-}
-
-type eventDraft struct {
-	eventType string
-	payload   any
-}
-
-func (s *Server) appendEvents(ctx context.Context, sessionID string, drafts []eventDraft) ([]protocol.Event, error) {
-	events := make([]protocol.Event, 0, len(drafts))
-	for _, draft := range drafts {
-		event, err := s.appendEvent(ctx, sessionID, draft.eventType, draft.payload)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, event)
-	}
-	return events, nil
 }
 
 func (s *Server) appendEvent(ctx context.Context, sessionID, eventType string, payload any) (protocol.Event, error) {
@@ -264,6 +245,43 @@ func (s *Server) appendEvent(ctx context.Context, sessionID, eventType string, p
 	}
 	s.broker.publish(event)
 	return event, nil
+}
+
+func (s *Server) setRunning(sessionID string, running agent.RunningSession) {
+	s.runningM.Lock()
+	s.running[sessionID] = running
+	s.runningM.Unlock()
+}
+
+func (s *Server) getRunning(sessionID string) agent.RunningSession {
+	s.runningM.RLock()
+	defer s.runningM.RUnlock()
+	return s.running[sessionID]
+}
+
+func (s *Server) sink(sessionID string) agent.Sink {
+	return sessionSink{s: s, sessionID: sessionID}
+}
+
+type sessionSink struct {
+	s         *Server
+	sessionID string
+}
+
+func (s sessionSink) AppendEvent(ctx context.Context, eventType string, payload any) (protocol.Event, error) {
+	return s.s.appendEvent(ctx, s.sessionID, eventType, payload)
+}
+
+func (s sessionSink) CreatePendingApproval(ctx context.Context, requestID string, payload any) error {
+	return s.s.store.CreatePendingApproval(ctx, s.sessionID, requestID, payload)
+}
+
+func (s sessionSink) ResolveApproval(ctx context.Context, requestID, action string) error {
+	return s.s.store.ResolveApproval(ctx, s.sessionID, requestID, action)
+}
+
+func (s sessionSink) SetSessionStatus(ctx context.Context, status string) error {
+	return s.s.store.SetSessionStatus(ctx, s.sessionID, status)
 }
 
 func writeSSE(w http.ResponseWriter, event protocol.Event) error {
@@ -276,6 +294,14 @@ func writeSSE(w http.ResponseWriter, event protocol.Event) error {
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {
+	if errors.Is(err, sessionlog.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
+}
+
+func writeAgentError(w http.ResponseWriter, err error) {
 	if errors.Is(err, sessionlog.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
