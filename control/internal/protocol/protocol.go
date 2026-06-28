@@ -35,6 +35,7 @@ type Session struct {
 }
 
 type CreateSessionRequest struct {
+	HostID string `json:"host_id,omitempty"`
 	Repo   string `json:"repo"`
 	CWD    string `json:"cwd"`
 	Branch string `json:"branch"`
@@ -44,6 +45,24 @@ type CreateSessionRequest struct {
 type CreateSessionResponse struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+}
+
+type RegisterHostRequest struct {
+	HostID    string   `json:"host_id"`
+	Name      string   `json:"name"`
+	URL       string   `json:"url"`
+	Agents    []string `json:"agents"`
+	RepoRoots []string `json:"repo_roots"`
+}
+
+type HostSummary struct {
+	HostID    string    `json:"host_id"`
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	Agents    []string  `json:"agents"`
+	RepoRoots []string  `json:"repo_roots"`
+	LastSeen  time.Time `json:"last_seen"`
+	Online    bool      `json:"online"`
 }
 
 type InputRequest struct {

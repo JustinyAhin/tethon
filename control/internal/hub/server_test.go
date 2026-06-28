@@ -1,0 +1,250 @@
+package hub
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"tethon/internal/protocol"
+	hostserver "tethon/internal/server"
+	"tethon/internal/sessionlog"
+)
+
+func TestRegisterAndListHosts(t *testing.T) {
+	hub := New(time.Second)
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	registerHost(t, ts.URL, protocol.RegisterHostRequest{
+		HostID:    "mac",
+		Name:      "Mac",
+		URL:       "http://127.0.0.1:39181",
+		Agents:    []string{"fake"},
+		RepoRoots: []string{"."},
+	})
+
+	var resp struct {
+		Hosts []protocol.HostSummary `json:"hosts"`
+	}
+	getJSON(t, ts.URL+"/hosts", &resp)
+	if len(resp.Hosts) != 1 {
+		t.Fatalf("expected 1 host, got %d", len(resp.Hosts))
+	}
+	if resp.Hosts[0].HostID != "mac" || !resp.Hosts[0].Online {
+		t.Fatalf("unexpected host summary: %+v", resp.Hosts[0])
+	}
+}
+
+func TestHubCreatesSessionAndStreamsReplayThroughHost(t *testing.T) {
+	hubTS, hostTS := newHubAndHost(t, time.Second)
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
+		HostID:    "mac",
+		Name:      "Mac",
+		URL:       hostTS.URL,
+		Agents:    []string{"fake"},
+		RepoRoots: []string{"."},
+	})
+
+	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+	if !strings.HasPrefix(session.ID, "mac/ses_") {
+		t.Fatalf("expected global session id, got %q", session.ID)
+	}
+
+	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/input", protocol.InputRequest{Text: "continue"})
+	events := streamEvents(t, hubTS.URL, session.ID, 3, 2)
+
+	assertSeqs(t, events, []int64{4, 5})
+	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})
+}
+
+func TestHubProxiesApprovalResolution(t *testing.T) {
+	hubTS, hostTS := newHubAndHost(t, time.Second)
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
+		HostID: "mac",
+		Name:   "Mac",
+		URL:    hostTS.URL,
+		Agents: []string{"fake"},
+	})
+
+	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/approvals/approval_bootstrap", protocol.ResolveApprovalRequest{Action: "approve"})
+	events := streamEvents(t, hubTS.URL, session.ID, 3, 2)
+
+	assertSeqs(t, events, []int64{4, 5})
+	assertTypes(t, events, []string{protocol.EventApprovalResolved, protocol.EventOutput})
+}
+
+func TestHubRejectsOfflineHost(t *testing.T) {
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	hub := New(time.Second)
+	hub.now = func() time.Time { return now }
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	registerHost(t, ts.URL, protocol.RegisterHostRequest{HostID: "mac", URL: "http://127.0.0.1:39181"})
+	now = now.Add(2 * time.Second)
+
+	body, err := json.Marshal(protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(ts.URL+"/sessions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %s", resp.Status)
+	}
+}
+
+func newHubAndHost(t *testing.T, timeout time.Duration) (*httptest.Server, *httptest.Server) {
+	t.Helper()
+	hubTS := httptest.NewServer(New(timeout).Handler())
+	t.Cleanup(hubTS.Close)
+
+	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "hostd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	hostTS := httptest.NewServer(hostserver.New(store).Handler())
+	t.Cleanup(hostTS.Close)
+
+	return hubTS, hostTS
+}
+
+func registerHost(t *testing.T, hubURL string, req protocol.RegisterHostRequest) {
+	t.Helper()
+	var out protocol.HostSummary
+	postJSONInto(t, hubURL+"/hosts/register", req, &out)
+}
+
+func createSession(t *testing.T, hubURL string, req protocol.CreateSessionRequest) protocol.CreateSessionResponse {
+	t.Helper()
+	var out protocol.CreateSessionResponse
+	postJSONInto(t, hubURL+"/sessions", req, &out)
+	return out
+}
+
+func postJSON(t *testing.T, url string, value any) {
+	t.Helper()
+	var out any
+	postJSONInto(t, url, value, &out)
+}
+
+func postJSONInto(t *testing.T, url string, value any, out any) {
+	t.Helper()
+	body, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		t.Fatalf("POST %s returned %s", url, resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func getJSON(t *testing.T, url string, out any) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		t.Fatalf("GET %s returned %s", url, resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func streamEvents(t *testing.T, baseURL, sessionID string, from int64, count int) []protocol.Event {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/sessions/"+sessionID+"/stream?from="+strconvInt(from), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream returned %s", resp.Status)
+	}
+
+	var events []protocol.Event
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var event protocol.Event
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+		if len(events) == count {
+			cancel()
+			return events
+		}
+	}
+	if err := scanner.Err(); err != nil && ctx.Err() == nil {
+		t.Fatal(err)
+	}
+	t.Fatalf("expected %d stream events, got %d", count, len(events))
+	return nil
+}
+
+func assertSeqs(t *testing.T, events []protocol.Event, want []int64) {
+	t.Helper()
+	if len(events) != len(want) {
+		t.Fatalf("expected %d events, got %d", len(want), len(events))
+	}
+	for i := range want {
+		if events[i].Seq != want[i] {
+			t.Fatalf("event %d seq = %d, want %d", i, events[i].Seq, want[i])
+		}
+	}
+}
+
+func assertTypes(t *testing.T, events []protocol.Event, want []string) {
+	t.Helper()
+	if len(events) != len(want) {
+		t.Fatalf("expected %d events, got %d", len(want), len(events))
+	}
+	for i := range want {
+		if events[i].Type != want[i] {
+			t.Fatalf("event %d type = %s, want %s", i, events[i].Type, want[i])
+		}
+	}
+}
+
+func strconvInt(value int64) string {
+	return strconv.FormatInt(value, 10)
+}

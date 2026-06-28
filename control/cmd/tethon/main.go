@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,8 +13,6 @@ import (
 	"strings"
 
 	"tethon/internal/protocol"
-	"tethon/internal/server"
-	"tethon/internal/sessionlog"
 )
 
 const defaultAddr = "127.0.0.1:39180"
@@ -32,8 +29,8 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
-	case "serve":
-		return serve(args[1:])
+	case "hosts":
+		return hosts(args[1:])
 	case "session":
 		return session(args[1:])
 	default:
@@ -41,23 +38,28 @@ func run(args []string) error {
 	}
 }
 
-func serve(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	addr := fs.String("addr", defaultAddr, "listen address")
-	dbPath := fs.String("db", "./tethon.db", "sqlite database path")
-	if err := fs.Parse(args); err != nil {
-		return err
+func hosts(args []string) error {
+	if len(args) == 0 {
+		return usage()
 	}
+	switch args[0] {
+	case "list":
+		return hostsList(args[1:])
+	default:
+		return usage()
+	}
+}
 
-	store, err := sessionlog.Open(context.Background(), *dbPath)
+func hostsList(args []string) error {
+	addr, rest, err := stringFlag(args, "addr", defaultAddr)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-
-	srv := &http.Server{Addr: *addr, Handler: server.New(store).Handler()}
-	log.Printf("serving on http://%s", *addr)
-	return srv.ListenAndServe()
+	if len(rest) != 0 {
+		return fmt.Errorf("usage: tethon hosts list")
+	}
+	var resp any
+	return getJSON("http://"+addr+"/hosts", &resp, os.Stdout)
 }
 
 func session(args []string) error {
@@ -85,7 +87,8 @@ func session(args []string) error {
 
 func sessionStart(args []string) error {
 	fs := flag.NewFlagSet("session start", flag.ExitOnError)
-	addr := fs.String("addr", defaultAddr, "server address")
+	addr := fs.String("addr", defaultAddr, "hub address")
+	hostID := fs.String("host", "", "host id")
 	repo := fs.String("repo", "", "repo path")
 	cwd := fs.String("cwd", "", "working directory")
 	branch := fs.String("branch", "", "branch")
@@ -96,6 +99,7 @@ func sessionStart(args []string) error {
 
 	var resp protocol.CreateSessionResponse
 	return postJSON("http://"+*addr+"/sessions", protocol.CreateSessionRequest{
+		HostID: *hostID,
 		Repo:   *repo,
 		CWD:    *cwd,
 		Branch: *branch,
@@ -113,7 +117,7 @@ func sessionStream(args []string) error {
 		return err
 	}
 	if len(rest) != 1 {
-		return fmt.Errorf("usage: tethon session stream <id> --from <seq>")
+		return fmt.Errorf("usage: tethon session stream <host_id/session_id> --from <seq>")
 	}
 
 	url := fmt.Sprintf("http://%s/sessions/%s/stream?from=%d", addr, rest[0], from)
@@ -136,7 +140,7 @@ func sessionInput(args []string) error {
 		return err
 	}
 	if len(rest) < 2 {
-		return fmt.Errorf("usage: tethon session input <id> <text>")
+		return fmt.Errorf("usage: tethon session input <host_id/session_id> <text>")
 	}
 	var resp any
 	return postJSON("http://"+addr+"/sessions/"+rest[0]+"/input", protocol.InputRequest{Text: strings.Join(rest[1:], " ")}, &resp, os.Stdout)
@@ -148,17 +152,30 @@ func sessionApproval(args []string, action string) error {
 		return err
 	}
 	if len(rest) < 2 {
-		return fmt.Errorf("usage: tethon session %s <id> <request_id>", action)
+		return fmt.Errorf("usage: tethon session %s <host_id/session_id> <request_id>", action)
 	}
 	req := protocol.ResolveApprovalRequest{Action: action}
 	if action == "reply" {
 		if len(rest) < 3 {
-			return fmt.Errorf("usage: tethon session reply <id> <request_id> <text>")
+			return fmt.Errorf("usage: tethon session reply <host_id/session_id> <request_id> <text>")
 		}
 		req.Text = strings.Join(rest[2:], " ")
 	}
 	var resp any
 	return postJSON("http://"+addr+"/sessions/"+rest[0]+"/approvals/"+rest[1], req, &resp, os.Stdout)
+}
+
+func getJSON(url string, out any, dst io.Writer) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		_, _ = io.Copy(os.Stderr, resp.Body)
+		return fmt.Errorf("request failed: %s", resp.Status)
+	}
+	return decodeAndPrint(resp.Body, out, dst)
 }
 
 func postJSON(url string, req any, out any, dst io.Writer) error {
@@ -175,7 +192,11 @@ func postJSON(url string, req any, out any, dst io.Writer) error {
 		_, _ = io.Copy(os.Stderr, resp.Body)
 		return fmt.Errorf("request failed: %s", resp.Status)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	return decodeAndPrint(resp.Body, out, dst)
+}
+
+func decodeAndPrint(src io.Reader, out any, dst io.Writer) error {
+	if err := json.NewDecoder(src).Decode(out); err != nil {
 		return err
 	}
 	enc := json.NewEncoder(dst)
@@ -221,10 +242,10 @@ func intFlag(args []string, name string, defaultValue int64) (int64, []string, e
 
 func usage() error {
 	return fmt.Errorf(`usage:
-  tethon serve --addr 127.0.0.1:39180 --db ./tethon.db
-  tethon session start --repo <path> --agent fake
-  tethon session stream <id> --from 0
-  tethon session input <id> <text>
-  tethon session approve <id> <request_id>
-  tethon session deny <id> <request_id>`)
+  tethon hosts list
+  tethon session start --host <host_id> --repo <path> --agent fake
+  tethon session stream <host_id/session_id> --from 0
+  tethon session input <host_id/session_id> <text>
+  tethon session approve <host_id/session_id> <request_id>
+  tethon session deny <host_id/session_id> <request_id>`)
 }

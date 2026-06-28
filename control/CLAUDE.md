@@ -6,9 +6,12 @@ Single Go module (`module tethon`). General repo rules live in the root `CLAUDE.
 
 ## Layout
 
-- `cmd/tethon/` — CLI entrypoint (`serve`, `session` subcommands)
+- `cmd/tethon/` — CLI client entrypoint (`hosts`, `session` subcommands); talks to the hub
+- `cmd/tethon-hub/` — hub entrypoint; host registry and client-facing relay
+- `cmd/tethon-hostd/` — host daemon entrypoint; owns session state and agent processes
+- `internal/hub/` — hub HTTP handlers, host registry, and session proxying
 - `internal/protocol/` — event + session schema (the wire contract)
-- `internal/server/` — HTTP handlers + in-memory event broker (fan-out to subscribers)
+- `internal/server/` — host-owned session HTTP handlers + in-memory event broker (fan-out to subscribers)
 - `internal/sessionlog/` — SQLite-backed append-only store; source of truth for sessions and events
 
 ## Protocol invariants
@@ -23,7 +26,8 @@ Single Go module (`module tethon`). General repo rules live in the root `CLAUDE.
 
 - Keep `internal/protocol` dependency-light. It defines wire contracts and shared payload types only.
 - Keep `internal/sessionlog` independent of HTTP/SSE concerns.
-- Keep `internal/server` responsible for HTTP behavior, request validation, and stream formatting.
+- Keep `internal/server` responsible for host-owned session HTTP behavior, request validation, and stream formatting.
+- Keep `internal/hub` independent of session storage. It routes and relays; it does not own session truth.
 - Keep `cmd/tethon` thin: parse flags, call server/client behavior, and print output.
 
 ## Dependencies and schema changes
