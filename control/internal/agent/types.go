@@ -10,6 +10,7 @@ import (
 )
 
 var ErrBusy = errors.New("agent turn is already running")
+var ErrSessionDone = errors.New("session is no longer active")
 
 type Capabilities struct {
 	Stream           bool
@@ -32,7 +33,8 @@ type Adapter interface {
 type RunningSession interface {
 	Input(context.Context, string) ([]protocol.Event, error)
 	ResolveApproval(context.Context, string, string, string) ([]protocol.Event, error)
-	Cancel(context.Context) error
+	Cancel(context.Context) ([]protocol.Event, error)
+	Terminal() bool
 }
 
 type Sink interface {

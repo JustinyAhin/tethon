@@ -181,6 +181,8 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		s.proxyStream(w, r, host.URL+"/sessions/"+localID+"/stream?"+r.URL.RawQuery)
 	case suffix == "input" && r.Method == http.MethodPost:
 		s.proxyJSON(w, r, host.URL+"/sessions/"+localID+"/input")
+	case suffix == "cancel" && r.Method == http.MethodPost:
+		s.proxyJSON(w, r, host.URL+"/sessions/"+localID+"/cancel")
 	case strings.HasPrefix(suffix, "approvals/") && r.Method == http.MethodPost:
 		requestID := strings.TrimPrefix(suffix, "approvals/")
 		if requestID == "" {

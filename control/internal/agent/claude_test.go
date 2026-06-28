@@ -130,7 +130,7 @@ func TestClaudeMalformedStreamEmitsError(t *testing.T) {
 	sink := newMemorySink()
 	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
 
-	_, err := adapter.Start(context.Background(), StartRequest{
+	running, err := adapter.Start(context.Background(), StartRequest{
 		Session: protocol.Session{ID: "ses_1", Repo: "."},
 		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "bad"},
 	}, sink)
@@ -143,6 +143,119 @@ func TestClaudeMalformedStreamEmitsError(t *testing.T) {
 	decodePayload(t, event, &payload)
 	if !strings.Contains(payload.Message, "parse claude stream") {
 		t.Fatalf("error message = %q", payload.Message)
+	}
+	if !running.Terminal() {
+		t.Fatal("expected malformed stream to terminate session")
+	}
+}
+
+func TestClaudeNonZeroExitEmitsStderrError(t *testing.T) {
+	process := newBlockingProcess()
+	process.stdout = strings.NewReader("")
+	process.stderr = strings.NewReader("boom\n")
+	process.waitErr = errors.New("exit status 1")
+	process.release()
+	runner := &singleProcessRunner{process: process}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "fail"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	event := sink.waitForType(t, protocol.EventError)
+	var payload protocol.ErrorPayload
+	decodePayload(t, event, &payload)
+	if payload.Message != "boom" {
+		t.Fatalf("error message = %q, want boom", payload.Message)
+	}
+	if !running.Terminal() {
+		t.Fatal("expected non-zero exit to terminate session")
+	}
+}
+
+func TestClaudeCancelInterruptsRunningProcess(t *testing.T) {
+	process := newBlockingProcess()
+	process.interruptReleases = true
+	runner := &singleProcessRunner{process: process}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, KillDelay: 20 * time.Millisecond})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "wait"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := running.Cancel(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != protocol.EventDone {
+		t.Fatalf("cancel events = %+v", events)
+	}
+	if process.interrupts() != 1 {
+		t.Fatalf("interrupts = %d, want 1", process.interrupts())
+	}
+	if process.kills() != 0 {
+		t.Fatalf("kills = %d, want 0", process.kills())
+	}
+	if !running.Terminal() {
+		t.Fatal("expected cancel to terminate session")
+	}
+}
+
+func TestClaudeCancelHardKillsIgnoredInterrupt(t *testing.T) {
+	process := newBlockingProcess()
+	process.killReleases = true
+	runner := &singleProcessRunner{process: process}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, KillDelay: time.Millisecond})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "wait"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := running.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if process.interrupts() != 1 {
+		t.Fatalf("interrupts = %d, want 1", process.interrupts())
+	}
+	if process.kills() != 1 {
+		t.Fatalf("kills = %d, want 1", process.kills())
+	}
+}
+
+func TestClaudeInputWhileRunningReturnsBusy(t *testing.T) {
+	process := newBlockingProcess()
+	process.interruptReleases = true
+	runner := &singleProcessRunner{process: process}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "wait"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := running.Input(context.Background(), "next"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("input error = %v, want ErrBusy", err)
+	}
+	if _, err := running.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -199,6 +312,98 @@ func (p fakeProcess) Stderr() io.Reader {
 
 func (fakeProcess) Wait() error {
 	return nil
+}
+
+func (fakeProcess) Interrupt() error {
+	return nil
+}
+
+func (fakeProcess) Kill() error {
+	return nil
+}
+
+type singleProcessRunner struct {
+	process *blockingProcess
+}
+
+func (r *singleProcessRunner) Start(context.Context, CommandSpec) (CommandProcess, error) {
+	return r.process, nil
+}
+
+type blockingProcess struct {
+	stdout io.Reader
+	stderr io.Reader
+
+	waitErr           error
+	interruptReleases bool
+	killReleases      bool
+
+	mu             sync.Mutex
+	interruptCount int
+	killCount      int
+	done           chan struct{}
+	once           sync.Once
+}
+
+func newBlockingProcess() *blockingProcess {
+	return &blockingProcess{
+		stdout: strings.NewReader(""),
+		stderr: strings.NewReader(""),
+		done:   make(chan struct{}),
+	}
+}
+
+func (p *blockingProcess) Stdout() io.Reader {
+	return p.stdout
+}
+
+func (p *blockingProcess) Stderr() io.Reader {
+	return p.stderr
+}
+
+func (p *blockingProcess) Wait() error {
+	<-p.done
+	return p.waitErr
+}
+
+func (p *blockingProcess) Interrupt() error {
+	p.mu.Lock()
+	p.interruptCount++
+	release := p.interruptReleases
+	p.mu.Unlock()
+	if release {
+		p.release()
+	}
+	return nil
+}
+
+func (p *blockingProcess) Kill() error {
+	p.mu.Lock()
+	p.killCount++
+	release := p.killReleases
+	p.mu.Unlock()
+	if release {
+		p.release()
+	}
+	return nil
+}
+
+func (p *blockingProcess) release() {
+	p.once.Do(func() {
+		close(p.done)
+	})
+}
+
+func (p *blockingProcess) interrupts() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.interruptCount
+}
+
+func (p *blockingProcess) kills() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.killCount
 }
 
 type memorySink struct {

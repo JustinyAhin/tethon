@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"tethon/internal/protocol"
 )
@@ -20,6 +21,7 @@ import (
 type ClaudeConfig struct {
 	Binary               string
 	AllowAnthropicAPIKey bool
+	KillDelay            time.Duration
 	Runner               CommandRunner
 }
 
@@ -37,12 +39,17 @@ type CommandProcess interface {
 	Stdout() io.Reader
 	Stderr() io.Reader
 	Wait() error
+	Interrupt() error
+	Kill() error
 }
 
 type execRunner struct{}
 
 func (execRunner) Start(ctx context.Context, spec CommandSpec) (CommandProcess, error) {
-	cmd := exec.CommandContext(ctx, spec.Binary, spec.Args...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(spec.Binary, spec.Args...)
 	cmd.Dir = spec.Dir
 
 	stdout, err := cmd.StdoutPipe()
@@ -77,9 +84,24 @@ func (p *execProcess) Wait() error {
 	return p.cmd.Wait()
 }
 
+func (p *execProcess) Interrupt() error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Signal(os.Interrupt)
+}
+
+func (p *execProcess) Kill() error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Kill()
+}
+
 type claudeAdapter struct {
 	binary               string
 	allowAnthropicAPIKey bool
+	killDelay            time.Duration
 	runner               CommandRunner
 }
 
@@ -92,9 +114,14 @@ func NewClaude(config ClaudeConfig) Adapter {
 	if runner == nil {
 		runner = execRunner{}
 	}
+	killDelay := config.KillDelay
+	if killDelay <= 0 {
+		killDelay = 5 * time.Second
+	}
 	return &claudeAdapter{
 		binary:               binary,
 		allowAnthropicAPIKey: config.AllowAnthropicAPIKey,
+		killDelay:            killDelay,
 		runner:               runner,
 	}
 }
@@ -145,7 +172,11 @@ type claudeSession struct {
 
 	mu              sync.Mutex
 	active          bool
-	cancel          context.CancelFunc
+	cancelling      bool
+	terminal        bool
+	doneEmitted     bool
+	process         CommandProcess
+	turnDone        chan struct{}
 	claudeSessionID string
 	pending         map[string]claudeApproval
 }
@@ -157,11 +188,8 @@ type claudeApproval struct {
 }
 
 func (s *claudeSession) Input(ctx context.Context, text string) ([]protocol.Event, error) {
-	s.mu.Lock()
-	busy := s.active
-	s.mu.Unlock()
-	if busy {
-		return nil, ErrBusy
+	if err := s.checkCanStart(); err != nil {
+		return nil, err
 	}
 
 	event, err := s.sink.AppendEvent(ctx, protocol.EventInputReceived, protocol.InputReceivedPayload{Text: text})
@@ -175,6 +203,9 @@ func (s *claudeSession) Input(ctx context.Context, text string) ([]protocol.Even
 }
 
 func (s *claudeSession) ResolveApproval(ctx context.Context, requestID, action, text string) ([]protocol.Event, error) {
+	if err := s.checkCanStart(); err != nil {
+		return nil, err
+	}
 	if err := s.sink.ResolveApproval(ctx, requestID, action); err != nil {
 		return nil, err
 	}
@@ -194,33 +225,71 @@ func (s *claudeSession) ResolveApproval(ctx context.Context, requestID, action, 
 	return []protocol.Event{resolved}, nil
 }
 
-func (s *claudeSession) Cancel(ctx context.Context) error {
+func (s *claudeSession) Cancel(ctx context.Context) ([]protocol.Event, error) {
 	s.mu.Lock()
-	cancel := s.cancel
+	if s.terminal {
+		s.mu.Unlock()
+		return nil, ErrSessionDone
+	}
+	process := s.process
+	done := s.turnDone
+	active := s.active
+	if active {
+		s.cancelling = true
+	}
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+
+	if active && process != nil {
+		_ = process.Interrupt()
+		select {
+		case <-done:
+		case <-time.After(s.adapter.killDelay):
+			_ = process.Kill()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+			}
+		}
 	}
-	if _, err := s.sink.AppendEvent(ctx, protocol.EventDone, map[string]string{"reason": "cancelled"}); err != nil {
-		return err
+	return s.markCancelled(ctx)
+}
+
+func (s *claudeSession) Terminal() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.terminal
+}
+
+func (s *claudeSession) checkCanStart() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.terminal:
+		return ErrSessionDone
+	case s.active || s.cancelling:
+		return ErrBusy
+	default:
+		return nil
 	}
-	return s.sink.SetSessionStatus(ctx, "done")
 }
 
 func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string) error {
 	s.mu.Lock()
-	if s.active {
+	if s.terminal {
+		s.mu.Unlock()
+		return ErrSessionDone
+	}
+	if s.active || s.cancelling {
 		s.mu.Unlock()
 		return ErrBusy
 	}
 	claudeSessionID := s.claudeSessionID
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx := context.Background()
 	s.active = true
-	s.cancel = cancel
+	s.cancelling = false
 	s.mu.Unlock()
 
 	if err := s.sink.SetSessionStatus(ctx, "running"); err != nil {
-		cancel()
 		s.finishTurn()
 		return err
 	}
@@ -237,24 +306,34 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string
 		Dir:    s.workDir,
 	})
 	if err != nil {
-		cancel()
 		s.finishTurn()
 		return err
 	}
 
-	go s.runTurn(runCtx, process, approvalID)
+	done := make(chan struct{})
+	s.mu.Lock()
+	s.process = process
+	s.turnDone = done
+	s.mu.Unlock()
+
+	go s.runTurn(runCtx, process, approvalID, done)
 	return nil
 }
 
 func (s *claudeSession) finishTurn() {
 	s.mu.Lock()
 	s.active = false
-	s.cancel = nil
+	s.cancelling = false
+	s.process = nil
+	s.turnDone = nil
 	s.mu.Unlock()
 }
 
-func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, approvalID string) {
-	defer s.finishTurn()
+func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, approvalID string, done chan struct{}) {
+	defer func() {
+		s.finishTurn()
+		close(done)
+	}()
 
 	var stderr bytes.Buffer
 	stderrDone := make(chan struct{})
@@ -264,16 +343,18 @@ func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, app
 	}()
 
 	if err := s.consumeStream(ctx, process.Stdout()); err != nil {
-		s.appendRuntimeError(ctx, err.Error())
+		if !s.isCancellingOrTerminal() {
+			s.appendTerminalError(ctx, err.Error())
+		}
 	}
 	waitErr := process.Wait()
 	<-stderrDone
-	if waitErr != nil && ctx.Err() == nil {
+	if waitErr != nil && !s.isCancellingOrTerminal() {
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
 			message = waitErr.Error()
 		}
-		s.appendRuntimeError(ctx, message)
+		s.appendTerminalError(ctx, message)
 	}
 
 	if approvalID != "" {
@@ -281,6 +362,12 @@ func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, app
 		delete(s.pending, approvalID)
 		s.mu.Unlock()
 	}
+}
+
+func (s *claudeSession) isCancellingOrTerminal() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cancelling || s.terminal
 }
 
 func (s *claudeSession) consumeStream(ctx context.Context, r io.Reader) error {
@@ -345,7 +432,7 @@ func (s *claudeSession) handleClaudeEvent(ctx context.Context, event claudeStrea
 			if message == "" {
 				message = "claude turn failed"
 			}
-			s.appendRuntimeError(ctx, message)
+			s.appendTerminalError(ctx, message)
 			return claudeTurnContinue, nil
 		}
 		if !*emittedOutput && strings.TrimSpace(event.Result) != "" {
@@ -434,7 +521,34 @@ func (s *claudeSession) approvalPrompt(requestID, action, text string) string {
 	return b.String()
 }
 
-func (s *claudeSession) appendRuntimeError(ctx context.Context, message string) {
+func (s *claudeSession) markCancelled(ctx context.Context) ([]protocol.Event, error) {
+	s.mu.Lock()
+	if s.doneEmitted {
+		s.mu.Unlock()
+		return nil, ErrSessionDone
+	}
+	s.terminal = true
+	s.doneEmitted = true
+	s.mu.Unlock()
+
+	event, err := s.sink.AppendEvent(ctx, protocol.EventDone, map[string]string{"reason": "cancelled"})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.sink.SetSessionStatus(ctx, "done"); err != nil {
+		return nil, err
+	}
+	return []protocol.Event{event}, nil
+}
+
+func (s *claudeSession) appendTerminalError(ctx context.Context, message string) {
+	s.mu.Lock()
+	if s.terminal {
+		s.mu.Unlock()
+		return
+	}
+	s.terminal = true
+	s.mu.Unlock()
 	_, _ = s.sink.AppendEvent(ctx, protocol.EventError, protocol.ErrorPayload{Message: message})
 	_ = s.sink.SetSessionStatus(ctx, "error")
 }

@@ -74,6 +74,8 @@ func session(args []string) error {
 		return sessionStream(args[1:])
 	case "input":
 		return sessionInput(args[1:])
+	case "cancel":
+		return sessionCancel(args[1:])
 	case "approve":
 		return sessionApproval(args[1:], "approve")
 	case "deny":
@@ -150,6 +152,18 @@ func sessionInput(args []string) error {
 	}
 	var resp any
 	return postJSON("http://"+addr+"/sessions/"+rest[0]+"/input", protocol.InputRequest{Text: strings.Join(rest[1:], " ")}, &resp, os.Stdout)
+}
+
+func sessionCancel(args []string) error {
+	addr, rest, err := stringFlag(args, "addr", defaultAddr)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return fmt.Errorf("usage: tethon session cancel <host_id/session_id>")
+	}
+	var resp any
+	return postJSON("http://"+addr+"/sessions/"+rest[0]+"/cancel", map[string]string{}, &resp, os.Stdout)
 }
 
 func sessionApproval(args []string, action string) error {
@@ -252,6 +266,7 @@ func usage() error {
   tethon session start --host <host_id> --repo <path> --agent fake [--prompt <text>]
   tethon session stream <host_id/session_id> --from 0
   tethon session input <host_id/session_id> <text>
+  tethon session cancel <host_id/session_id>
   tethon session approve <host_id/session_id> <request_id>
   tethon session deny <host_id/session_id> <request_id>`)
 }

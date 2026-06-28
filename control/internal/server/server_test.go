@@ -83,6 +83,30 @@ func TestFakeAgentInputDoneEmitsDone(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput, protocol.EventDone})
 }
 
+func TestCancelSessionEmitsDoneAndDeactivatesSession(t *testing.T) {
+	ts := newTestServer(t)
+
+	session := postSession(t, ts.URL)
+	postJSON(t, ts.URL+"/sessions/"+session.ID+"/cancel", map[string]string{})
+
+	events := streamEvents(t, ts.URL, session.ID, 3, 1)
+	assertSeqs(t, events, []int64{4})
+	assertTypes(t, events, []string{protocol.EventDone})
+
+	body, err := json.Marshal(protocol.InputRequest{Text: "continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(ts.URL+"/sessions/"+session.ID+"/input", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 after cancel, got %s", resp.Status)
+	}
+}
+
 func TestClaudeAgentSessionStreamsMappedOutput(t *testing.T) {
 	runner := &serverFakeCommandRunner{output: `{"type":"system","subtype":"init","session_id":"claude_1"}` + "\n" +
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"real output"}]},"session_id":"claude_1"}` + "\n" +
@@ -193,6 +217,14 @@ func (p serverFakeProcess) Stderr() io.Reader {
 }
 
 func (serverFakeProcess) Wait() error {
+	return nil
+}
+
+func (serverFakeProcess) Interrupt() error {
+	return nil
+}
+
+func (serverFakeProcess) Kill() error {
 	return nil
 }
 

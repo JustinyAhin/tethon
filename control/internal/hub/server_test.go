@@ -82,6 +82,23 @@ func TestHubProxiesApprovalResolution(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventApprovalResolved, protocol.EventOutput})
 }
 
+func TestHubProxiesCancellation(t *testing.T) {
+	hubTS, hostTS := newHubAndHost(t, time.Second)
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
+		HostID: "mac",
+		Name:   "Mac",
+		URL:    hostTS.URL,
+		Agents: []string{"fake"},
+	})
+
+	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/cancel", map[string]string{})
+	events := streamEvents(t, hubTS.URL, session.ID, 3, 1)
+
+	assertSeqs(t, events, []int64{4})
+	assertTypes(t, events, []string{protocol.EventDone})
+}
+
 func TestHubRejectsOfflineHost(t *testing.T) {
 	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
 	hub := New(time.Second)

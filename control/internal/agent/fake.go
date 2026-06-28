@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"tethon/internal/protocol"
 )
@@ -49,10 +50,15 @@ func (fakeAdapter) Start(ctx context.Context, req StartRequest, sink Sink) (Runn
 }
 
 type fakeSession struct {
-	sink Sink
+	sink     Sink
+	mu       sync.Mutex
+	terminal bool
 }
 
 func (s *fakeSession) Input(ctx context.Context, text string) ([]protocol.Event, error) {
+	if s.Terminal() {
+		return nil, ErrSessionDone
+	}
 	events := make([]protocol.Event, 0, 3)
 	event, err := s.sink.AppendEvent(ctx, protocol.EventInputReceived, protocol.InputReceivedPayload{Text: text})
 	if err != nil {
@@ -75,11 +81,15 @@ func (s *fakeSession) Input(ctx context.Context, text string) ([]protocol.Event,
 		if err := s.sink.SetSessionStatus(ctx, "done"); err != nil {
 			return nil, err
 		}
+		s.setTerminal()
 	}
 	return events, nil
 }
 
 func (s *fakeSession) ResolveApproval(ctx context.Context, requestID, action, text string) ([]protocol.Event, error) {
+	if s.Terminal() {
+		return nil, ErrSessionDone
+	}
 	if err := s.sink.ResolveApproval(ctx, requestID, action); err != nil {
 		return nil, err
 	}
@@ -102,6 +112,29 @@ func (s *fakeSession) ResolveApproval(ctx context.Context, requestID, action, te
 	return events, nil
 }
 
-func (*fakeSession) Cancel(context.Context) error {
-	return nil
+func (s *fakeSession) Cancel(ctx context.Context) ([]protocol.Event, error) {
+	if s.Terminal() {
+		return nil, ErrSessionDone
+	}
+	event, err := s.sink.AppendEvent(ctx, protocol.EventDone, map[string]string{"reason": "cancelled"})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.sink.SetSessionStatus(ctx, "done"); err != nil {
+		return nil, err
+	}
+	s.setTerminal()
+	return []protocol.Event{event}, nil
+}
+
+func (s *fakeSession) Terminal() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.terminal
+}
+
+func (s *fakeSession) setTerminal() {
+	s.mu.Lock()
+	s.terminal = true
+	s.mu.Unlock()
 }

@@ -110,6 +110,10 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		s.handleInput(w, r, sessionID)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
+		s.handleCancel(w, r, sessionID)
+		return
+	}
 	if len(parts) == 3 && parts[1] == "approvals" && r.Method == http.MethodPost {
 		s.handleApproval(w, r, sessionID, parts[2])
 		return
@@ -202,6 +206,7 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request, sessionID s
 		writeAgentError(w, err)
 		return
 	}
+	s.clearRunningIfTerminal(sessionID, running)
 
 	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
 }
@@ -235,6 +240,27 @@ func (s *Server) handleApproval(w http.ResponseWriter, r *http.Request, sessionI
 		writeAgentError(w, err)
 		return
 	}
+	s.clearRunningIfTerminal(sessionID, running)
+	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
+}
+
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if _, err := s.store.GetSession(r.Context(), sessionID); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	running := s.getRunning(sessionID)
+	if running == nil {
+		writeError(w, http.StatusConflict, "session is not active")
+		return
+	}
+
+	events, err := running.Cancel(r.Context())
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	s.clearRunningIfTerminal(sessionID, running)
 	writeJSON(w, http.StatusAccepted, map[string]any{"events": events})
 }
 
@@ -257,6 +283,17 @@ func (s *Server) getRunning(sessionID string) agent.RunningSession {
 	s.runningM.RLock()
 	defer s.runningM.RUnlock()
 	return s.running[sessionID]
+}
+
+func (s *Server) clearRunningIfTerminal(sessionID string, running agent.RunningSession) {
+	if !running.Terminal() {
+		return
+	}
+	s.runningM.Lock()
+	if s.running[sessionID] == running {
+		delete(s.running, sessionID)
+	}
+	s.runningM.Unlock()
 }
 
 func (s *Server) sink(sessionID string) agent.Sink {
@@ -307,6 +344,10 @@ func writeAgentError(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, agent.ErrBusy) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if errors.Is(err, agent.ErrSessionDone) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
