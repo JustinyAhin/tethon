@@ -134,8 +134,10 @@ func TestRecoverInterruptsAndAdopts(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	// Simulate a session that was running with a live worktree when the daemon stopped.
-	mgr1 := worktree.NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	// Simulate a session that was running with a live worktree when the daemon
+	// stopped. A restart reuses the same worktree root.
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	mgr1 := worktree.NewManager(wtRoot)
 	wt, err := mgr1.Create(ctx, worktree.CreateOptions{ID: "ses_x", RepoID: repos[0].ID, RepoPath: repos[0].Path})
 	if err != nil {
 		t.Fatal(err)
@@ -148,8 +150,8 @@ func TestRecoverInterruptsAndAdopts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Restart: a fresh manager with an empty live map, then recover.
-	mgr2 := worktree.NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	// Restart: a fresh manager (empty live map) on the same root, then recover.
+	mgr2 := worktree.NewManager(wtRoot)
 	srv := NewWithConfig(store, Config{Agents: agent.NewRegistry(agent.NewFake()), Repos: registry, Worktrees: mgr2})
 	if err := srv.Recover(ctx); err != nil {
 		t.Fatal(err)

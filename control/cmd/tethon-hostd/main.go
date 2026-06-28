@@ -58,6 +58,7 @@ func run() error {
 	name := flag.String("name", hostname, "host display name")
 	allowAnthropicAPIKey := flag.Bool("allow-anthropic-api-key", false, "allow claude-cli sessions while ANTHROPIC_API_KEY is set")
 	worktreeRoot := flag.String("worktree-root", "", "directory for per-session worktrees (default: <db dir>/worktrees)")
+	cacheRoot := flag.String("cache-root", "", "shared build/dependency cache root for agents (default: <db dir>/cache)")
 	var repoRoots repoRootsFlag
 	flag.Var(&repoRoots, "repo-root", "repo root to advertise; repeatable")
 	flag.Parse()
@@ -81,6 +82,17 @@ func run() error {
 		return err
 	}
 	worktrees := worktree.NewManager(wtRoot)
+
+	cRoot := *cacheRoot
+	if cRoot == "" {
+		cRoot = filepath.Join(filepath.Dir(*dbPath), "cache")
+	}
+	if cRoot, err = filepath.Abs(cRoot); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cRoot, 0o755); err != nil {
+		return err
+	}
 	logger := slog.Default()
 
 	store, err := sessionlog.Open(ctx, *dbPath)
@@ -93,8 +105,10 @@ func run() error {
 		agentRegistry = agent.NewRegistry(agent.NewFake(), agent.NewClaude(agent.ClaudeConfig{
 			AllowAnthropicAPIKey: *allowAnthropicAPIKey,
 			Logger:               logger,
+			ExtraEnv:             cacheEnv(cRoot),
 		}))
 	}
+	log.Printf("hostd %s using worktree root %s and shared cache root %s", *hostID, wtRoot, cRoot)
 
 	hostURL := "http://" + *addr
 	registerReq := protocol.RegisterHostRequest{
@@ -124,6 +138,20 @@ func run() error {
 	srv := &http.Server{Addr: *addr, Handler: hostServer.Handler()}
 	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
 	return srv.ListenAndServe()
+}
+
+// cacheEnv builds the shared build/dependency cache environment for agent
+// processes. Each var points at a subdir of root so worktrees reuse one cache
+// instead of duplicating it. All are content-addressed or shared stores that
+// are safe across worktrees; vars are harmless to repos that don't use them.
+func cacheEnv(root string) []string {
+	return []string{
+		"GOCACHE=" + filepath.Join(root, "go-build"),
+		"GOMODCACHE=" + filepath.Join(root, "go-mod"),
+		"npm_config_cache=" + filepath.Join(root, "npm"),
+		"PIP_CACHE_DIR=" + filepath.Join(root, "pip"),
+		"CARGO_HOME=" + filepath.Join(root, "cargo"),
+	}
 }
 
 func repoInfos(registry *repo.Registry) []protocol.RepoInfo {

@@ -1,6 +1,14 @@
 // Package worktree manages per-session git worktrees so that concurrent agents
 // on the same repository run in isolation: each session gets its own work-tree
 // directory and branch, and removing one never touches another.
+//
+// Disk hygiene: worktrees share the repository's git object store, so only
+// checked-out files are duplicated per session. Build and dependency caches are
+// kept out of the worktree (the host daemon points them at a shared cache root
+// via the agent's environment), so a retained failed worktree holds source and
+// in-tree artifacts but no duplicated caches. The manager only ever deletes
+// worktrees it created or adopted from its own records, and only under its
+// configured root — it never removes a path it does not own.
 package worktree
 
 import (
@@ -24,6 +32,10 @@ var ErrWorktreeExists = errors.New("worktree already exists")
 // ErrBranchExists is returned when the requested branch is already present in
 // the repository (so it cannot be created for a new session).
 var ErrBranchExists = errors.New("branch already exists")
+
+// ErrNotOwned is returned when a worktree path is outside the manager's root,
+// so the manager refuses to track or delete it.
+var ErrNotOwned = errors.New("worktree path is not owned by this manager")
 
 // Worktree describes a single checked-out work-tree owned by a session.
 type Worktree struct {
@@ -107,27 +119,51 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (Worktree, err
 func (m *Manager) Remove(ctx context.Context, id string) error {
 	m.mu.Lock()
 	rec, ok := m.live[id]
-	if ok {
-		delete(m.live, id)
-	}
 	m.mu.Unlock()
 	if !ok {
 		return ErrNotFound
 	}
+	// Guardrail: only ever delete a path the manager owns. This refuses to act
+	// on a record whose path escaped the root (e.g. a tampered session log) or
+	// points at the main checkout, even though Create/Adopt should prevent it.
+	if !m.withinRoot(rec.wt.Path) || rec.wt.Path == rec.repoPath {
+		return ErrNotOwned
+	}
+
+	m.mu.Lock()
+	delete(m.live, id)
+	m.mu.Unlock()
+
 	if err := runGit(ctx, "-C", rec.repoPath, "worktree", "remove", "--force", rec.wt.Path); err != nil {
 		return err
 	}
-	_ = runGit(ctx, "-C", rec.repoPath, "branch", "-D", rec.wt.Branch)
+	if rec.wt.Branch != "" {
+		_ = runGit(ctx, "-C", rec.repoPath, "branch", "-D", rec.wt.Branch)
+	}
 	return nil
 }
 
 // Adopt records a worktree the daemon created in a previous run (recovered from
-// the session log) so it is tracked and can be cleaned up later. Adopting only
-// DB-recorded worktrees keeps removal limited to worktrees the daemon owns.
-func (m *Manager) Adopt(wt Worktree, repoPath string) {
+// the session log) so it is tracked and can be cleaned up later. The path must
+// be inside the manager's root; an outside path (e.g. from a corrupted record)
+// is rejected so it can never be handed to Remove.
+func (m *Manager) Adopt(wt Worktree, repoPath string) error {
+	if !m.withinRoot(wt.Path) {
+		return ErrNotOwned
+	}
 	m.mu.Lock()
 	m.live[wt.ID] = record{wt: wt, repoPath: repoPath}
 	m.mu.Unlock()
+	return nil
+}
+
+// withinRoot reports whether path sits inside the manager's root directory.
+func (m *Manager) withinRoot(path string) bool {
+	rel, err := filepath.Rel(m.root, filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 // Get returns the tracked worktree for an owner id.

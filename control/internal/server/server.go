@@ -625,13 +625,15 @@ func (s *Server) Recover(ctx context.Context) error {
 		if s.worktrees != nil && s.repos != nil && session.WorktreePath != "" && session.RepoID != "" {
 			if repo, ok := s.repos.Get(session.RepoID); ok {
 				if info, statErr := os.Stat(session.WorktreePath); statErr == nil && info.IsDir() {
-					s.worktrees.Adopt(worktree.Worktree{
+					if err := s.worktrees.Adopt(worktree.Worktree{
 						ID:      session.ID,
 						RepoID:  session.RepoID,
 						Path:    session.WorktreePath,
 						Branch:  session.Branch,
 						BaseRef: session.BaseRef,
-					}, repo.Path)
+					}, repo.Path); err != nil {
+						s.logger.Warn("session_worktree_adopt_rejected", "session_id", session.ID, "worktree", session.WorktreePath, "error", err.Error())
+					}
 				}
 			}
 		}

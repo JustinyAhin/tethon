@@ -1,10 +1,38 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"tethon/internal/repo"
 )
+
+func TestCacheEnv(t *testing.T) {
+	env := cacheEnv("/state/cache")
+	want := map[string]string{
+		"GOCACHE":          "/state/cache/go-build",
+		"GOMODCACHE":       "/state/cache/go-mod",
+		"npm_config_cache": "/state/cache/npm",
+		"PIP_CACHE_DIR":    "/state/cache/pip",
+		"CARGO_HOME":       "/state/cache/cargo",
+	}
+	got := map[string]string{}
+	for _, kv := range env {
+		key, val, ok := strings.Cut(kv, "=")
+		if !ok {
+			t.Fatalf("malformed env entry %q", kv)
+		}
+		got[key] = val
+	}
+	for key, val := range want {
+		if got[key] != val {
+			t.Fatalf("cacheEnv[%q] = %q, want %q", key, got[key], val)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("cacheEnv returned %d entries, want %d: %#v", len(got), len(want), env)
+	}
+}
 
 func TestRepoInfos(t *testing.T) {
 	registry, err := repo.NewRegistry(

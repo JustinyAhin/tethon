@@ -49,6 +49,56 @@ func TestClaudeStartMapsAssistantOutput(t *testing.T) {
 	}
 }
 
+func TestClaudeStartPassesExtraEnvToCommand(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n",
+	}}
+	extra := []string{"GOCACHE=/cache/go-build", "GOMODCACHE=/cache/go-mod"}
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, ExtraEnv: extra})
+
+	_, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "hi"},
+	}, newMemorySink())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := runner.specs()
+	if len(specs) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(specs))
+	}
+	if strings.Join(specs[0].Env, "\x00") != strings.Join(extra, "\x00") {
+		t.Fatalf("command env = %#v, want %#v", specs[0].Env, extra)
+	}
+}
+
+func TestMergeEnvOverridesInheritedKeys(t *testing.T) {
+	base := []string{"PATH=/usr/bin", "GOCACHE=/old", "HOME=/home/me"}
+	override := []string{"GOCACHE=/shared/go-build", "GOMODCACHE=/shared/go-mod"}
+	merged := mergeEnv(base, override)
+
+	got := map[string]int{}
+	for _, kv := range merged {
+		key, _, _ := strings.Cut(kv, "=")
+		got[key]++
+	}
+	for _, key := range []string{"GOCACHE", "GOMODCACHE", "PATH", "HOME"} {
+		if got[key] != 1 {
+			t.Fatalf("key %q appears %d times, want 1: %#v", key, got[key], merged)
+		}
+	}
+	// The override value must be the one that survives.
+	last := map[string]string{}
+	for _, kv := range merged {
+		key, val, _ := strings.Cut(kv, "=")
+		last[key] = val
+	}
+	if last["GOCACHE"] != "/shared/go-build" {
+		t.Fatalf("GOCACHE = %q, want /shared/go-build", last["GOCACHE"])
+	}
+}
+
 func TestClaudeInputResumesCapturedSession(t *testing.T) {
 	runner := &fakeCommandRunner{outputs: []string{
 		`{"type":"system","subtype":"init","session_id":"claude_1"}` + "\n" +

@@ -30,6 +30,32 @@ Single Go module (`module tethon`). General repo rules live in the root `CLAUDE.
 - Keep `internal/hub` independent of session storage. It routes and relays; it does not own session truth.
 - Keep `cmd/tethon` thin: parse flags, call server/client behavior, and print output.
 
+## Worktree disk hygiene
+
+Each session runs in its own git worktree (`internal/worktree`), created under the
+host's `-worktree-root` (default `<db dir>/worktrees`). To keep parallel and
+short-lived sessions from ballooning disk:
+
+- **Git objects are shared.** Worktrees share the repo's object store, so only
+  checked-out files are duplicated per session — not history.
+- **Build/dependency caches are shared, not duplicated.** The daemon points each
+  agent process at a shared cache root (`-cache-root`, default `<db dir>/cache`) via
+  injected env: `GOCACHE`, `GOMODCACHE`, `npm_config_cache`, `PIP_CACHE_DIR`,
+  `CARGO_HOME`. These are content-addressed / shared stores, safe across worktrees;
+  unused vars are harmless to repos in other languages. The injection path is
+  `ClaudeConfig.ExtraEnv` → `CommandSpec.Env` → `mergeEnv(os.Environ(), …)` (the
+  shared values override anything inherited).
+- **In-tree artifacts are per-worktree.** `node_modules`, `target/`, `dist/`, etc.
+  live inside the worktree. A `done`/cancelled session's worktree is removed entirely
+  (reclaiming them); a failed/interrupted session's worktree is **retained** for
+  inspection — but because caches are external, what's retained is source plus
+  in-tree output, not gigabytes of duplicated cache.
+- **Removal is owned-only.** The manager only ever deletes worktrees it created or
+  adopted from its own records, and only paths under its root (`ErrNotOwned`
+  otherwise). It never touches the main checkout or a path it doesn't own.
+- macOS/APFS copy-on-write may make worktree checkouts cheap, but this is an
+  optimization — do not rely on it; the hygiene above must hold on any filesystem.
+
 ## Dependencies and schema changes
 
 - Prefer the Go standard library unless a dependency materially reduces control-plane complexity.

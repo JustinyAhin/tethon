@@ -25,12 +25,19 @@ type ClaudeConfig struct {
 	KillDelay            time.Duration
 	Logger               *slog.Logger
 	Runner               CommandRunner
+	// ExtraEnv is added to every spawned agent process (KEY=VALUE), overriding
+	// any inherited value. The host uses it to point build/dependency caches at
+	// a shared directory so worktrees do not each duplicate them.
+	ExtraEnv []string
 }
 
 type CommandSpec struct {
 	Binary string
 	Args   []string
 	Dir    string
+	// Env entries are added to the inherited environment, overriding inherited
+	// keys. Empty means inherit the daemon environment unchanged.
+	Env []string
 }
 
 type CommandRunner interface {
@@ -53,6 +60,9 @@ func (execRunner) Start(ctx context.Context, spec CommandSpec) (CommandProcess, 
 	}
 	cmd := exec.Command(spec.Binary, spec.Args...)
 	cmd.Dir = spec.Dir
+	if len(spec.Env) > 0 {
+		cmd.Env = mergeEnv(os.Environ(), spec.Env)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -106,6 +116,7 @@ type claudeAdapter struct {
 	killDelay            time.Duration
 	logger               *slog.Logger
 	runner               CommandRunner
+	extraEnv             []string
 }
 
 func NewClaude(config ClaudeConfig) Adapter {
@@ -131,6 +142,7 @@ func NewClaude(config ClaudeConfig) Adapter {
 		killDelay:            killDelay,
 		logger:               logger,
 		runner:               runner,
+		extraEnv:             config.ExtraEnv,
 	}
 }
 
@@ -328,6 +340,7 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string
 		Binary: s.adapter.binary,
 		Args:   args,
 		Dir:    s.workDir,
+		Env:    s.adapter.extraEnv,
 	})
 	if err != nil {
 		s.finishTurn()
@@ -773,4 +786,25 @@ func workingDir(repo, cwd string) string {
 		return cwd
 	}
 	return filepath.Join(repo, cwd)
+}
+
+// mergeEnv returns base with override applied: any base entry whose KEY also
+// appears in override is dropped, then override is appended. This makes the
+// override values authoritative regardless of platform env-precedence rules.
+func mergeEnv(base, override []string) []string {
+	overridden := make(map[string]struct{}, len(override))
+	for _, kv := range override {
+		if key, _, ok := strings.Cut(kv, "="); ok {
+			overridden[key] = struct{}{}
+		}
+	}
+	merged := make([]string, 0, len(base)+len(override))
+	for _, kv := range base {
+		key, _, _ := strings.Cut(kv, "=")
+		if _, ok := overridden[key]; ok {
+			continue
+		}
+		merged = append(merged, kv)
+	}
+	return append(merged, override...)
 }
