@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"os/exec"
 	"sort"
 
 	"tethon/internal/protocol"
 )
+
+var ErrBusy = errors.New("agent turn is already running")
 
 type Capabilities struct {
 	Stream           bool
@@ -54,7 +58,11 @@ func NewRegistry(adapters ...Adapter) *Registry {
 }
 
 func DefaultRegistry() *Registry {
-	return NewRegistry(NewFake())
+	adapters := []Adapter{NewFake()}
+	if _, err := exec.LookPath("claude"); err == nil {
+		adapters = append(adapters, NewClaude(ClaudeConfig{}))
+	}
+	return NewRegistry(adapters...)
 }
 
 func (r *Registry) Get(name string) (Adapter, bool) {

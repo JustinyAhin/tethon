@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -51,6 +52,7 @@ func run() error {
 	dbPath := flag.String("db", "./hostd.db", "sqlite database path")
 	hostID := flag.String("host-id", sanitizeHostID(hostname), "host id")
 	name := flag.String("name", hostname, "host display name")
+	allowAnthropicAPIKey := flag.Bool("allow-anthropic-api-key", false, "allow claude-cli sessions while ANTHROPIC_API_KEY is set")
 	var repoRoots repoRootsFlag
 	flag.Var(&repoRoots, "repo-root", "repo root to advertise; repeatable")
 	flag.Parse()
@@ -63,7 +65,12 @@ func run() error {
 		return err
 	}
 	defer store.Close()
-	agentRegistry := agent.DefaultRegistry()
+	agentRegistry := agent.NewRegistry(agent.NewFake())
+	if _, err := exec.LookPath("claude"); err == nil {
+		agentRegistry = agent.NewRegistry(agent.NewFake(), agent.NewClaude(agent.ClaudeConfig{
+			AllowAnthropicAPIKey: *allowAnthropicAPIKey,
+		}))
+	}
 
 	hostURL := "http://" + *addr
 	registerReq := protocol.RegisterHostRequest{

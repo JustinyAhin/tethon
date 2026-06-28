@@ -93,8 +93,13 @@ func sessionStart(args []string) error {
 	cwd := fs.String("cwd", "", "working directory")
 	branch := fs.String("branch", "", "branch")
 	agent := fs.String("agent", "fake", "agent")
+	prompt := fs.String("prompt", "", "initial prompt")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	initialPrompt := *prompt
+	if initialPrompt == "" && fs.NArg() > 0 {
+		initialPrompt = strings.Join(fs.Args(), " ")
 	}
 
 	var resp protocol.CreateSessionResponse
@@ -104,6 +109,7 @@ func sessionStart(args []string) error {
 		CWD:    *cwd,
 		Branch: *branch,
 		Agent:  *agent,
+		Prompt: initialPrompt,
 	}, &resp, os.Stdout)
 }
 
@@ -243,7 +249,7 @@ func intFlag(args []string, name string, defaultValue int64) (int64, []string, e
 func usage() error {
 	return fmt.Errorf(`usage:
   tethon hosts list
-  tethon session start --host <host_id> --repo <path> --agent fake
+  tethon session start --host <host_id> --repo <path> --agent fake [--prompt <text>]
   tethon session stream <host_id/session_id> --from 0
   tethon session input <host_id/session_id> <text>
   tethon session approve <host_id/session_id> <request_id>

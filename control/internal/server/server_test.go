@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"tethon/internal/agent"
 	"tethon/internal/protocol"
 	"tethon/internal/sessionlog"
 )
@@ -81,6 +83,36 @@ func TestFakeAgentInputDoneEmitsDone(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput, protocol.EventDone})
 }
 
+func TestClaudeAgentSessionStreamsMappedOutput(t *testing.T) {
+	runner := &serverFakeCommandRunner{output: `{"type":"system","subtype":"init","session_id":"claude_1"}` + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"real output"}]},"session_id":"claude_1"}` + "\n" +
+		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n"}
+	ts := newTestServerWithAgents(t, agent.NewRegistry(agent.NewClaude(agent.ClaudeConfig{
+		Binary: "claude",
+		Runner: runner,
+	})))
+
+	var session protocol.CreateSessionResponse
+	postJSONInto(t, ts.URL+"/sessions", protocol.CreateSessionRequest{
+		Repo:   ".",
+		Agent:  "claude-cli",
+		Prompt: "say hi",
+	}, &session)
+
+	events := streamEvents(t, ts.URL, session.ID, 0, 2)
+	assertTypes(t, events, []string{protocol.EventSessionStarted, protocol.EventOutput})
+	var payload protocol.OutputPayload
+	if err := json.Unmarshal(events[1].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Text != "real output" {
+		t.Fatalf("output = %q, want real output", payload.Text)
+	}
+	if len(runner.specs) != 1 || runner.specs[0].Args[len(runner.specs[0].Args)-1] != "say hi" {
+		t.Fatalf("unexpected claude command specs: %+v", runner.specs)
+	}
+}
+
 func TestInputForInactiveSessionReturnsConflict(t *testing.T) {
 	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
 	if err != nil {
@@ -118,6 +150,11 @@ func TestInputForInactiveSessionReturnsConflict(t *testing.T) {
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return newTestServerWithAgents(t, agent.DefaultRegistry())
+}
+
+func newTestServerWithAgents(t *testing.T, agents *agent.Registry) *httptest.Server {
+	t.Helper()
 	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -127,9 +164,36 @@ func newTestServer(t *testing.T) *httptest.Server {
 			t.Fatal(err)
 		}
 	})
-	ts := httptest.NewServer(New(store).Handler())
+	ts := httptest.NewServer(NewWithAgents(store, agents).Handler())
 	t.Cleanup(ts.Close)
 	return ts
+}
+
+type serverFakeCommandRunner struct {
+	output string
+	specs  []agent.CommandSpec
+}
+
+func (r *serverFakeCommandRunner) Start(_ context.Context, spec agent.CommandSpec) (agent.CommandProcess, error) {
+	r.specs = append(r.specs, spec)
+	return serverFakeProcess{stdout: strings.NewReader(r.output), stderr: strings.NewReader("")}, nil
+}
+
+type serverFakeProcess struct {
+	stdout io.Reader
+	stderr io.Reader
+}
+
+func (p serverFakeProcess) Stdout() io.Reader {
+	return p.stdout
+}
+
+func (p serverFakeProcess) Stderr() io.Reader {
+	return p.stderr
+}
+
+func (serverFakeProcess) Wait() error {
+	return nil
 }
 
 func postSession(t *testing.T, baseURL string) protocol.CreateSessionResponse {

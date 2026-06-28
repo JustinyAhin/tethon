@@ -40,6 +40,7 @@ type CreateSessionRequest struct {
 	CWD    string `json:"cwd"`
 	Branch string `json:"branch"`
 	Agent  string `json:"agent"`
+	Prompt string `json:"prompt,omitempty"`
 }
 
 type CreateSessionResponse struct {
@@ -79,9 +80,12 @@ type OutputPayload struct {
 }
 
 type ApprovalPayload struct {
-	RequestID string `json:"request_id"`
-	Command   string `json:"command"`
-	Reason    string `json:"reason"`
+	RequestID string          `json:"request_id"`
+	Command   string          `json:"command"`
+	Reason    string          `json:"reason"`
+	ToolName  string          `json:"tool_name,omitempty"`
+	ToolInput json.RawMessage `json:"tool_input,omitempty"`
+	Agent     string          `json:"agent,omitempty"`
 }
 
 type ApprovalResolvedPayload struct {
