@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -59,6 +60,10 @@ func run() error {
 	if len(repoRoots) == 0 {
 		repoRoots = append(repoRoots, cwd)
 	}
+	normalizedRepoRoots, err := normalizeRepoRoots(repoRoots)
+	if err != nil {
+		return err
+	}
 
 	store, err := sessionlog.Open(context.Background(), *dbPath)
 	if err != nil {
@@ -78,16 +83,48 @@ func run() error {
 		Name:      *name,
 		URL:       hostURL,
 		Agents:    agentRegistry.Names(),
-		RepoRoots: repoRoots,
+		RepoRoots: normalizedRepoRoots,
 	}
 	if err := registerHost(*hubURL, registerReq); err != nil {
 		log.Printf("initial host registration failed: %v", err)
 	}
 	go heartbeatLoop(*hubURL, registerReq)
 
-	srv := &http.Server{Addr: *addr, Handler: server.NewWithAgents(store, agentRegistry).Handler()}
+	srv := &http.Server{Addr: *addr, Handler: server.NewWithConfig(store, server.Config{
+		Agents:    agentRegistry,
+		RepoRoots: normalizedRepoRoots,
+	}).Handler()}
 	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
 	return srv.ListenAndServe()
+}
+
+func normalizeRepoRoots(values []string) ([]string, error) {
+	roots := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		abs, err := filepath.Abs(value)
+		if err != nil {
+			return nil, err
+		}
+		realPath, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			return nil, fmt.Errorf("repo root %q: %w", value, err)
+		}
+		info, err := os.Stat(realPath)
+		if err != nil {
+			return nil, fmt.Errorf("repo root %q: %w", value, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("repo root %q is not a directory", value)
+		}
+		clean := filepath.Clean(realPath)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		roots = append(roots, clean)
+	}
+	return roots, nil
 }
 
 func heartbeatLoop(hubURL string, req protocol.RegisterHostRequest) {

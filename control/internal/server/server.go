@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,11 +18,17 @@ import (
 )
 
 type Server struct {
-	store    *sessionlog.Store
-	broker   *broker
-	agents   *agent.Registry
-	running  map[string]agent.RunningSession
-	runningM sync.RWMutex
+	store     *sessionlog.Store
+	broker    *broker
+	agents    *agent.Registry
+	repoRoots []string
+	running   map[string]agent.RunningSession
+	runningM  sync.RWMutex
+}
+
+type Config struct {
+	Agents    *agent.Registry
+	RepoRoots []string
 }
 
 func New(store *sessionlog.Store) *Server {
@@ -28,14 +36,34 @@ func New(store *sessionlog.Store) *Server {
 }
 
 func NewWithAgents(store *sessionlog.Store, agents *agent.Registry) *Server {
+	return NewWithConfig(store, Config{Agents: agents})
+}
+
+func NewWithConfig(store *sessionlog.Store, config Config) *Server {
+	agents := config.Agents
 	if agents == nil {
 		agents = agent.DefaultRegistry()
 	}
+	repoRoots := make([]string, 0, len(config.RepoRoots))
+	for _, root := range config.RepoRoots {
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			repoRoots = append(repoRoots, filepath.Clean(root))
+			continue
+		}
+		realPath, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			repoRoots = append(repoRoots, filepath.Clean(abs))
+			continue
+		}
+		repoRoots = append(repoRoots, filepath.Clean(realPath))
+	}
 	return &Server{
-		store:   store,
-		broker:  newBroker(),
-		agents:  agents,
-		running: make(map[string]agent.RunningSession),
+		store:     store,
+		broker:    newBroker(),
+		agents:    agents,
+		repoRoots: repoRoots,
+		running:   make(map[string]agent.RunningSession),
 	}
 }
 
@@ -44,6 +72,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/sessions", s.handleSessions)
 	mux.HandleFunc("/sessions/", s.handleSession)
 	return mux
+}
+
+func (s *Server) normalizeCreateRequest(req protocol.CreateSessionRequest) (protocol.CreateSessionRequest, error) {
+	repo, err := normalizeExistingDir(req.Repo)
+	if err != nil {
+		return protocol.CreateSessionRequest{}, fmt.Errorf("repo must be an existing directory")
+	}
+	realRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		return protocol.CreateSessionRequest{}, fmt.Errorf("repo must be an existing directory")
+	}
+	if len(s.repoRoots) > 0 && !pathWithinAny(realRepo, s.repoRoots) {
+		return protocol.CreateSessionRequest{}, fmt.Errorf("repo must be inside an advertised repo root")
+	}
+
+	cwd, err := normalizeCWD(realRepo, req.CWD)
+	if err != nil {
+		return protocol.CreateSessionRequest{}, err
+	}
+	req.Repo = realRepo
+	req.CWD = cwd
+	return req, nil
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -70,11 +120,17 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	normalizedReq, err := s.normalizeCreateRequest(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	session, err := s.store.CreateSession(r.Context(), sessionlog.CreateSessionParams{
-		Repo:   req.Repo,
-		CWD:    req.CWD,
-		Branch: req.Branch,
-		Agent:  req.Agent,
+		Repo:   normalizedReq.Repo,
+		CWD:    normalizedReq.CWD,
+		Branch: normalizedReq.Branch,
+		Agent:  normalizedReq.Agent,
 		Status: "running",
 	})
 	if err != nil {
@@ -82,7 +138,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running, err := adapter.Start(r.Context(), agent.StartRequest{Session: session, Create: req}, s.sink(session.ID))
+	running, err := adapter.Start(r.Context(), agent.StartRequest{Session: session, Create: normalizedReq}, s.sink(session.ID))
 	if err != nil {
 		_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
 		_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
@@ -92,6 +148,89 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	s.setRunning(session.ID, running)
 
 	writeJSON(w, http.StatusCreated, protocol.CreateSessionResponse{ID: session.ID, Status: session.Status})
+}
+
+func normalizeExistingDir(path string) (string, error) {
+	if path == "" {
+		return "", errors.New("path is required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	clean := filepath.Clean(abs)
+	info, err := os.Stat(clean)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("path is not a directory")
+	}
+	return clean, nil
+}
+
+func normalizeCWD(repo, cwd string) (string, error) {
+	if cwd == "" || cwd == "." {
+		return "", nil
+	}
+	if filepath.IsAbs(cwd) {
+		return "", fmt.Errorf("cwd must be relative to repo")
+	}
+	clean := filepath.Clean(cwd)
+	if clean == "." {
+		return "", nil
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("cwd must stay inside repo")
+	}
+	finalPath := filepath.Join(repo, clean)
+	info, err := os.Stat(finalPath)
+	if err != nil {
+		return "", fmt.Errorf("cwd must be an existing directory")
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("cwd must be an existing directory")
+	}
+	realRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		return "", fmt.Errorf("repo must be an existing directory")
+	}
+	realCWD, err := filepath.EvalSymlinks(finalPath)
+	if err != nil {
+		return "", fmt.Errorf("cwd must be an existing directory")
+	}
+	if !pathWithin(realCWD, realRepo) {
+		return "", fmt.Errorf("cwd must stay inside repo")
+	}
+	rel, err := filepath.Rel(repo, finalPath)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." {
+		return "", nil
+	}
+	return filepath.Clean(rel), nil
+}
+
+func pathWithinAny(path string, roots []string) bool {
+	for _, root := range roots {
+		realRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			continue
+		}
+		if pathWithin(path, realRoot) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {

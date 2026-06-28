@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -137,6 +138,117 @@ func TestClaudeAgentSessionStreamsMappedOutput(t *testing.T) {
 	}
 }
 
+func TestCreateSessionNormalizesRepoAndRelativeCWD(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	cwd := filepath.Join(repo, "control")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realRepo, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realCWD, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &serverFakeCommandRunner{output: `{"type":"system","subtype":"init","session_id":"claude_1"}` + "\n" +
+		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n"}
+	ts := newTestServerWithConfig(t, Config{
+		Agents: agent.NewRegistry(agent.NewClaude(agent.ClaudeConfig{
+			Binary: "claude",
+			Runner: runner,
+		})),
+		RepoRoots: []string{root},
+	})
+
+	var session protocol.CreateSessionResponse
+	postJSONInto(t, ts.URL+"/sessions", protocol.CreateSessionRequest{
+		Repo:   filepath.Join(root, ".", "repo"),
+		CWD:    "control",
+		Agent:  "claude-cli",
+		Prompt: "say hi",
+	}, &session)
+
+	events := streamEvents(t, ts.URL, session.ID, 0, 1)
+	var payload protocol.CreateSessionRequest
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Repo != realRepo || payload.CWD != "control" {
+		t.Fatalf("session_started payload repo/cwd = %q/%q, want %q/control", payload.Repo, payload.CWD, realRepo)
+	}
+	if len(runner.specs) != 1 || runner.specs[0].Dir != realCWD {
+		t.Fatalf("command dir = %+v, want %q", runner.specs, realCWD)
+	}
+}
+
+func TestCreateSessionRejectsInvalidRepoAndCWD(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(filepath.Join(repo, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repoFile := filepath.Join(root, "repo-file")
+	if err := os.WriteFile(repoFile, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cwdFile := filepath.Join(repo, "file")
+	if err := os.WriteFile(cwdFile, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	ts := newTestServerWithConfig(t, Config{
+		Agents:    agent.NewRegistry(agent.NewFake()),
+		RepoRoots: []string{root},
+	})
+
+	cases := []protocol.CreateSessionRequest{
+		{Repo: filepath.Join(root, "missing"), Agent: "fake"},
+		{Repo: repoFile, Agent: "fake"},
+		{Repo: outside, Agent: "fake"},
+		{Repo: repo, CWD: filepath.Join(repo, "subdir"), Agent: "fake"},
+		{Repo: repo, CWD: "../outside", Agent: "fake"},
+		{Repo: repo, CWD: "missing", Agent: "fake"},
+		{Repo: repo, CWD: "file", Agent: "fake"},
+	}
+	for _, req := range cases {
+		resp := postJSONStatus(t, ts.URL+"/sessions", req)
+		if resp != http.StatusBadRequest {
+			t.Fatalf("request %+v returned %d, want 400", req, resp)
+		}
+	}
+}
+
+func TestCreateSessionRejectsSymlinkCWDOutsideRepo(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "linked-outside")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	ts := newTestServerWithConfig(t, Config{
+		Agents:    agent.NewRegistry(agent.NewFake()),
+		RepoRoots: []string{root},
+	})
+
+	resp := postJSONStatus(t, ts.URL+"/sessions", protocol.CreateSessionRequest{
+		Repo:  repo,
+		CWD:   "linked-outside",
+		Agent: "fake",
+	})
+	if resp != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp)
+	}
+}
+
 func TestInputForInactiveSessionReturnsConflict(t *testing.T) {
 	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
 	if err != nil {
@@ -179,6 +291,11 @@ func newTestServer(t *testing.T) *httptest.Server {
 
 func newTestServerWithAgents(t *testing.T, agents *agent.Registry) *httptest.Server {
 	t.Helper()
+	return newTestServerWithConfig(t, Config{Agents: agents})
+}
+
+func newTestServerWithConfig(t *testing.T, config Config) *httptest.Server {
+	t.Helper()
 	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +305,7 @@ func newTestServerWithAgents(t *testing.T, agents *agent.Registry) *httptest.Ser
 			t.Fatal(err)
 		}
 	})
-	ts := httptest.NewServer(NewWithAgents(store, agents).Handler())
+	ts := httptest.NewServer(NewWithConfig(store, config).Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -239,6 +356,20 @@ func postJSON(t *testing.T, url string, value any) {
 	t.Helper()
 	var out any
 	postJSONInto(t, url, value, &out)
+}
+
+func postJSONStatus(t *testing.T, url string, value any) int {
+	t.Helper()
+	body, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
 }
 
 func postJSONInto(t *testing.T, url string, value any, out any) {
