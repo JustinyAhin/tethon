@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { getSessions } from '$lib/remote-functions/sessions.remote';
 	import SessionCard from '$lib/components/session-card.svelte';
 
@@ -7,12 +8,22 @@
 	const sessionError = $derived(
 		sessions.error?.message ?? (sessions.current?.ok === false ? sessions.current.error : '')
 	);
+
+	onMount(() => {
+		const timer = setInterval(() => sessions.refresh(), 5000);
+		return () => clearInterval(timer);
+	});
 </script>
 
 <section>
 	<div class="mb-4 flex items-center justify-between">
 		<h1 class="text-xl font-semibold">Sessions</h1>
-		<a href="/sessions/new" class="text-sm text-blue-600 hover:underline">New session</a>
+		<div class="flex items-center gap-3 text-sm">
+			<button class="text-blue-600 hover:underline" onclick={() => sessions.refresh()}>
+				Refresh
+			</button>
+			<a href="/sessions/new" class="text-blue-600 hover:underline">New session</a>
+		</div>
 	</div>
 
 	{#if sessionError}

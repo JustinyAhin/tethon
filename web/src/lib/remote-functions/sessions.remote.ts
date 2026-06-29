@@ -77,12 +77,18 @@ const createSession = form(CreateSessionSchema, async (data): Promise<CreateResu
 	}
 });
 
-const streamSession = query.live(v.string(), async function* (id) {
+const StreamSessionSchema = v.object({
+	id: v.pipe(v.string(), v.nonEmpty()),
+	from: v.optional(v.number(), 0)
+});
+
+const streamSession = query.live(StreamSessionSchema, async function* ({ id, from }) {
 	const controller = new AbortController();
 	try {
 		for await (const event of streamSessionEvents({
 			baseUrl: hubBase(),
 			id,
+			from,
 			signal: controller.signal
 		})) {
 			yield event;

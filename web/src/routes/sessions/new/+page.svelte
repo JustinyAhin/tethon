@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { PersistedState, watch } from 'runed';
 	import { getHosts } from '$lib/remote-functions/hosts.remote';
 	import { createSession } from '$lib/remote-functions/sessions.remote';
@@ -14,6 +15,13 @@
 		() => selectedHostId,
 		(id) => {
 			lastHost.current = id;
+		}
+	);
+
+	watch(
+		() => createSession.result,
+		(result) => {
+			if (result?.ok) goto(`/sessions/${result.id}`);
 		}
 	);
 
@@ -117,24 +125,9 @@
 		</button>
 	</form>
 
-	{#if createSession.result}
-		{#if createSession.result.ok}
-			<div class="mt-4 rounded border border-green-200 bg-green-50 p-3 text-sm">
-				<p class="font-medium text-green-800">Session started</p>
-				<p class="text-green-700">
-					id: <code>{createSession.result.id}</code> · status: {createSession.result.status}
-				</p>
-				<a
-					href="/sessions/{createSession.result.id}"
-					class="mt-1 inline-block text-blue-600 hover:underline"
-				>
-					Open session →
-				</a>
-			</div>
-		{:else}
-			<p class="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-				{createSession.result.error}
-			</p>
-		{/if}
+	{#if createSession.result && !createSession.result.ok}
+		<p class="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+			{createSession.result.error}
+		</p>
 	{/if}
 </section>

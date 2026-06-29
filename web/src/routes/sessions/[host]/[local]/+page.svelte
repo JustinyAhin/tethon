@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { PersistedState } from 'runed';
 	import { page } from '$app/state';
 	import {
 		streamSession,
@@ -23,10 +24,16 @@
 	type ApprovalAction = 'approve' | 'deny' | 'reply';
 
 	const id = `${page.params.host}/${page.params.local}`;
-	const stream = streamSession(id);
+	const persisted = new PersistedState<SessionEvent[]>(`tethon:events:${id}`, []);
 
-	let events = $state<SessionEvent[]>([]);
-	const seen = new SvelteSet<number>();
+	let events = $state<SessionEvent[]>(persisted.current);
+	const seen = new SvelteSet<number>(events.map((e) => e.seq));
+	const fromCursor = events.reduce((max, e) => Math.max(max, e.seq), 0);
+	const stream = streamSession({ id, from: fromCursor });
+
+	$effect(() => {
+		persisted.current = [...events];
+	});
 	let logEl = $state<HTMLElement>();
 	let replyOpen = $state<Record<string, boolean>>({});
 	let replyText = $state<Record<string, string>>({});
