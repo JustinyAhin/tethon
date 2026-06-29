@@ -81,6 +81,15 @@ export interface RepoInfo {
 	path: string;
 	default_branch?: string;
 }
+/**
+ * RepoRefsResponse lists a repository's existing refs so clients can offer a
+ * base_ref picker. Branches lead with the default branch; both slices are
+ * always present (empty rather than null).
+ */
+export interface RepoRefsResponse {
+	branches: string[];
+	tags: string[];
+}
 export interface RegisterHostRequest {
 	host_id: string;
 	name: string;

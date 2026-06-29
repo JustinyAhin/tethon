@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sessions", s.handleSessions)
 	mux.HandleFunc("/sessions/", s.handleSession)
+	mux.HandleFunc("/repos/", s.handleRepo)
 	return mux
 }
 
@@ -481,6 +482,37 @@ func (s *Server) removeSessionWorktree(ctx context.Context, session protocol.Ses
 
 func isTerminalStatus(status string) bool {
 	return status == "done" || status == "error" || status == "cancelled"
+}
+
+// handleRepo serves host-owned repo metadata. Currently only
+// GET /repos/{id}/refs, which lists a registered repo's branches and tags so
+// clients can offer a base_ref picker.
+func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/repos/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "refs" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.repos == nil {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	rp, ok := s.repos.Get(parts[0])
+	if !ok {
+		writeError(w, http.StatusNotFound, "unknown repo_id")
+		return
+	}
+	branches, tags, err := repo.ListRefs(r.Context(), rp)
+	if err != nil {
+		s.logger.Error("repo_refs_failed", "repo_id", rp.ID, "error", err.Error())
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, protocol.RepoRefsResponse{Branches: branches, Tags: tags})
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, sessionID string) {

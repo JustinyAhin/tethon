@@ -161,6 +161,54 @@ func Discover(ctx context.Context, paths []string) ([]Repo, error) {
 	return repos, nil
 }
 
+// ListRefs returns a repo's existing branches and tags so clients can offer a
+// base_ref picker. Branches are most-recently-committed first with the default
+// branch pinned to the front; tags are most-recently-created first. Both slices
+// are non-nil so the wire form is [] rather than null.
+func ListRefs(ctx context.Context, repo Repo) (branches, tags []string, err error) {
+	branchOut, err := gitOutput(ctx, repo.Path, "for-each-ref", "--format=%(refname:short)", "--sort=-committerdate", "refs/heads")
+	if err != nil {
+		return nil, nil, err
+	}
+	tagOut, err := gitOutput(ctx, repo.Path, "for-each-ref", "--format=%(refname:short)", "--sort=-creatordate", "refs/tags")
+	if err != nil {
+		return nil, nil, err
+	}
+	return pinFirst(splitLines(branchOut), repo.DefaultBranch), splitLines(tagOut), nil
+}
+
+func splitLines(s string) []string {
+	out := []string{}
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// pinFirst moves want to the front of refs if present, preserving the order of
+// the rest. A missing or already-leading want leaves the slice unchanged.
+func pinFirst(refs []string, want string) []string {
+	if want == "" {
+		return refs
+	}
+	idx := -1
+	for i, ref := range refs {
+		if ref == want {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return refs
+	}
+	reordered := make([]string, 0, len(refs))
+	reordered = append(reordered, want)
+	reordered = append(reordered, refs[:idx]...)
+	return append(reordered, refs[idx+1:]...)
+}
+
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	var stdout, stderr bytes.Buffer

@@ -93,6 +93,14 @@ type RepoInfo struct {
 	DefaultBranch string `json:"default_branch,omitempty"`
 }
 
+// RepoRefsResponse lists a repository's existing refs so clients can offer a
+// base_ref picker. Branches lead with the default branch; both slices are
+// always present (empty rather than null).
+type RepoRefsResponse struct {
+	Branches []string `json:"branches"`
+	Tags     []string `json:"tags"`
+}
+
 type RegisterHostRequest struct {
 	HostID    string     `json:"host_id"`
 	Name      string     `json:"name"`
