@@ -5,6 +5,8 @@ session running on a Mac host. It uses the hub, the macOS host daemon, and the
 web companion. Mobile is intentionally not in this path yet; the mobile client
 is covered by the Phase 8 client-parity work.
 
+For current gaps that affect this path, see `kb/known-limitations.md`.
+
 ## Prerequisites
 
 - A hub deployed at a public HTTPS URL, for example `https://hub.tethon.dev`.

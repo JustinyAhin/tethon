@@ -1,5 +1,7 @@
 # Road to MVP
 
+Last synced with Beads/code: 2026-06-29.
+
 ## MVP definition
 
 The MVP is a usable remote coding-agent control loop:
@@ -33,6 +35,8 @@ Exit check:
 
 ## Phase 1 — Host daemon and hub split
 
+Status: done.
+
 Goal: prove the real architecture boundary: clients talk to one hub, but the host daemon owns session truth.
 
 Deliver:
@@ -61,6 +65,8 @@ Exit check:
 
 ## Phase 2 — Real agent v0
 
+Status: done.
+
 Goal: replace the fake agent with one real coding-agent backend while keeping the protocol stable.
 
 Deliver:
@@ -74,8 +80,7 @@ Deliver:
 
 Research before implementation:
 
-- Verify current Claude Code structured/streaming output and permission-prompt hooks against current docs/CLI behavior.
-- Verify whether Codex exposes a comparable structured stream and approval surface.
+- Done in `kb/agent-adapter-research.md`.
 
 Exit check:
 
@@ -86,6 +91,8 @@ Exit check:
 - Restart client mid-session and replay missed output from cursor.
 
 ## Phase 3 — Worktree isolation
+
+Status: done.
 
 Goal: make parallel sessions safe by giving each session its own git worktree.
 
@@ -109,6 +116,8 @@ Exit check:
 
 ## Phase 4 — Web companion v0
 
+Status: partially done; Beads epic still open.
+
 Goal: validate the hub API with the fastest interactive client.
 
 Deliver:
@@ -122,6 +131,22 @@ Deliver:
 - Approval cards with approve, deny, and reply.
 - Minimal auth suitable for solo use.
 
+Delivered so far:
+
+- SvelteKit app under `web/`.
+- Host list with online/offline state.
+- Repo/cwd/session start form.
+- Session list and session detail view.
+- Structured event stream UI.
+- Input box for sending messages.
+- Approval cards with approve, deny, and reply.
+- Solo auth path using Cloudflare Access for web plus hub bearer-token auth.
+
+Still open:
+
+- New-session form improvements for base refs, branch defaults, and cwd suggestions.
+- Hard verification of web reload/reconnect from a persisted cursor. The server supports cursor replay, but the current web page streams from `0` and dedupes in memory.
+
 Exit check:
 
 - From web, start a real agent session through the hub.
@@ -129,6 +154,8 @@ Exit check:
 - Resolve an approval from the web UI.
 
 ## Phase 5 — Mobile app v0
+
+Status: mostly not started; only scaffold is done.
 
 Goal: make the phone workflow usable before adding push.
 
@@ -142,6 +169,19 @@ Deliver:
 - Cursor persistence on device so app restarts resume cleanly.
 - Basic auth against hub.
 
+Delivered so far:
+
+- Expo app scaffold under `mobile/`.
+
+Still open:
+
+- Session list/detail screens.
+- Phone-optimized stream UI.
+- Send-message input.
+- Approval cards.
+- On-device cursor persistence.
+- Hub auth.
+
 Exit check:
 
 - From phone, start or open a session.
@@ -149,6 +189,8 @@ Exit check:
 - Send input and resolve approval.
 
 ## Phase 6 — Push approvals
+
+Status: not started.
 
 Goal: make approvals work without opening the app.
 
@@ -170,6 +212,8 @@ Exit check:
 
 ## Phase 7 — MVP hardening
 
+Status: partially done; Beads epic still open.
+
 Goal: make the solo-developer MVP reliable enough to use while away from the Mac.
 
 Deliver:
@@ -183,6 +227,22 @@ Deliver:
 - Health endpoints for hub and host daemon.
 - Basic retry/backoff for host-to-hub connection.
 
+Delivered so far:
+
+- macOS LaunchAgent install/run story for `tethon-hostd`.
+- Stable app-data paths for hostd state, worktrees, and shared caches.
+- Basic auth/token rotation for hub, host daemon, web, and CLI.
+- Retry/backoff for host registration and heartbeat.
+- Dokploy hub deploy runbook exists in `kb/hub-deploy-dokploy.md`.
+
+Still open:
+
+- `caffeinate` while sessions are active.
+- Persistent hub registry for hosts and sessions.
+- More complete structured logs and useful error messages.
+- Host daemon health endpoint.
+- Mobile auth.
+
 Exit check:
 
 - Fresh Mac can install and register host daemon.
@@ -191,6 +251,8 @@ Exit check:
 - Mobile and web can recover session state after network interruption.
 
 ## Phase 8 — MVP release candidate
+
+Status: open.
 
 Goal: freeze the minimum product and use it for real work.
 
@@ -201,7 +263,18 @@ Deliver:
 - Real agent sessions support output, input, done/error, and approvals.
 - Worktree isolation is on by default.
 - Regression tests for protocol replay, hub relay, approval lifecycle, and worktree cleanup.
-- Known limitations documented in `kb/`.
+- Known limitations documented in `kb/known-limitations.md`.
+
+Delivered so far:
+
+- First remote `claude-cli` session runbook in `kb/first-remote-agent-session.md`.
+- Known limitations document.
+
+Still open:
+
+- Web and mobile client parity.
+- Mobile-away-from-Mac release-candidate exit check.
+- Final regression/limitations pass once mobile and push are implemented.
 
 Exit check:
 

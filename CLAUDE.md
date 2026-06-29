@@ -6,12 +6,16 @@ Design docs, decisions, and build order live in `kb/`. Read `kb/agent-control-de
 
 ## Codebase Structure
 
-The repo is empty beyond `kb/` — everything below is planned, built roughly in this order:
+The repo now has the first working control-plane slices:
 
-- **Host daemon** — Go. One per machine; owns session state, manages a git worktree pool, spawns/supervises agents, emits structured events.
-- **Hub** — always-on coordinator on a small VPS. Routing + session index + event relay. Single auth/connection surface for clients.
-- **Web companion** — SvelteKit. Dashboard + raw xterm.js terminal. Fastest place to validate the protocol.
-- **Mobile client** — Expo (React Native). Structured-first UI: approval cards, diff viewer, agent stream. The primary surface.
+- `control/` — Go module for the hub, host daemon, CLI, session protocol, SQLite event log, real `claude-cli` adapter, repo registry, and per-session worktrees.
+- `web/` — SvelteKit companion app. It can list hosts/sessions, start sessions, stream structured events, send input, and resolve approvals. Raw terminal support has not landed yet.
+- `mobile/` — Expo (React Native) scaffold only. The phone workflow is still planned work.
+- `deploy/hub/` — Docker Compose/Dokploy deployment files for `tethon-hub`.
+- `scripts/` — operational scripts, currently macOS host daemon install/run and Beads backup.
+- `kb/` — design brief, roadmap, runbooks, research notes, and known limitations. Read `kb/agent-control-design.md` before architectural changes, but treat it as target design unless it explicitly says "current".
+
+Current routing caveat: the host daemon registers and heartbeats outbound, but the hub still calls the registered host daemon URL for session operations. Until host-initiated persistent hub connections land, the VPS hub must be able to reach each `tethon-hostd` URL.
 
 ## Working Principles
 

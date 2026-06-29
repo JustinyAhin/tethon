@@ -1,42 +1,59 @@
-# sv
+# tethon web
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+SvelteKit companion app for operating Tethon sessions from a browser.
 
-## Creating a project
+Current web capabilities:
 
-If you're seeing this, you've probably already done this step. Congrats!
+- host dashboard with online/offline state
+- new-session form backed by the hub API
+- session list and session detail views
+- structured SSE event stream rendering
+- input composer for follow-up messages
+- approval cards with approve, deny, and reply actions
+- Cloudflare Access gate in deployed environments
 
-```sh
-# create a new project
-npx sv create my-app
-```
+Not landed yet:
 
-To recreate this project with the same configuration:
+- raw xterm.js terminal escape hatch
+- persisted client cursor resume across page reload/app restarts
+- richer repo ref/cwd pickers
+- mobile parity
 
-```sh
-# recreate this project
-bun x sv@0.16.1 create --template minimal --types ts --add prettier eslint sveltekit-adapter="adapter:cloudflare+cfTarget:workers" experimental="versions:none+features:async,remoteFunctions,explicitEnvironmentVariables,handleRenderingErrors" --install bun web
-```
+## Develop
 
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
+Use Bun, not npm/pnpm/yarn.
 
 ```sh
-npm run build
+bun install
+bun dev
 ```
 
-You can preview the production build with `npm run preview`.
+Required server-side environment variables:
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+- `HUB_BASE_URL` - hub URL, for example `https://hub.tethon.dev`
+- `HUB_AUTH_TOKEN` - bearer token accepted by the hub
+
+Do not commit local environment files. If values need changing, update your local environment yourself.
+
+## Checks
+
+```sh
+bun lint
+bun check
+bun build
+```
+
+If `wrangler` reports stale generated Worker types, run:
+
+```sh
+bun gen
+```
+
+If hub routes or protocol types change, use:
+
+```sh
+bun run gen:protocol
+bun run gen:hub-sdk
+```
+
+Component-specific coding rules live in `web/CLAUDE.md`.
