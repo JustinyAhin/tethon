@@ -39,6 +39,7 @@ When you need Svelte or SvelteKit docs, use the LLM-optimized versions:
 - Use direct `export const` for route exports (`load`, `entries`, `prerender`, etc.) — these must be inline named exports, so they're exempt from the exports-at-end rule. Don't add explicit `$types` annotations unless the code genuinely needs them.
 - Prefer **remote functions** (`.remote.ts`) for client–server communication: `query` (read), `form` (form submit with progressive enhancement), `command` (write without a form). Place them in `src/lib/remote-functions/` and import via the `$lib` alias.
 - Reserve `+server.ts` API routes for things remote functions can't do: webhooks, non-browser clients, third-party callbacks.
+- Name component files in kebab-case (e.g. `host-card.svelte`, not `HostCard.svelte`); import them under a PascalCase identifier.
 - The hub is the source of truth for session state — the web app reads/relays it, it does not own it. Mirror the protocol invariants in `../control/CLAUDE.md` (append-only events, cursor replay, reconnect-with-last-cursor); don't invent client-side state that diverges from the event log.
 
 ## Environment & bindings

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getHosts } from '$lib/remote-functions/hosts.remote';
-	import HostCard from '$lib/components/HostCard.svelte';
+	import HostCard from '$lib/components/host-card.svelte';
 
 	const hosts = getHosts();
 </script>
