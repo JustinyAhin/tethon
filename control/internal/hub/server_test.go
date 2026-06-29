@@ -54,6 +54,15 @@ func TestHubRequiresBearerTokenWhenConfigured(t *testing.T) {
 	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "secret", http.StatusOK)
 }
 
+func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthToken("secret")
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	assertStatus(t, http.MethodGet, ts.URL+"/healthz", "", http.StatusOK)
+}
+
 func TestHubBearerTokenAllowsSessionLifecycle(t *testing.T) {
 	hub := New(time.Second)
 	hub.SetAuthToken("secret")

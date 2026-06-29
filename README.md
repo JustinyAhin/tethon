@@ -28,3 +28,4 @@ Early. `control/` holds the first piece: a Go implementation of the session prot
 
 - `control/` — Go session-protocol prototype
 - `kb/` — design brief, decisions, and build order — start with [`kb/agent-control-design.md`](kb/agent-control-design.md)
+- [`kb/hub-deploy-caddy.md`](kb/hub-deploy-caddy.md) — current VPS + Caddy deployment path for `hub.tethon.dev`

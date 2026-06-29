@@ -51,6 +51,10 @@ func New(hostTimeout time.Duration) *Server {
 func (s *Server) Handler() http.Handler {
 	next := s.humaHandler()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+			return
+		}
 		if !s.authorized(r) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, http.StatusUnauthorized, "unauthorized")
