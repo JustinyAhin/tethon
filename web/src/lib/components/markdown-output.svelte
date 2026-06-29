@@ -1,22 +1,11 @@
 <script lang="ts" module>
-	type MarkdownSatteri = typeof import('@astrojs/markdown-satteri');
-	type MarkdownProcessor = Awaited<ReturnType<MarkdownSatteri['createSatteriMarkdownProcessor']>>;
+	import MarkdownIt from 'markdown-it';
 
-	let processor: Promise<MarkdownProcessor> | undefined;
-
-	const getProcessor = async () => {
-		processor ??= import('@astrojs/markdown-satteri').then((mod) =>
-			mod.createSatteriMarkdownProcessor({
-				syntaxHighlight: false,
-				smartypants: false,
-				features: { frontmatter: false }
-			})
-		);
-		return processor;
-	};
-
-	const escapeRawHTML = (markdown: string): string =>
-		markdown.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+	const parser = new MarkdownIt({
+		html: false,
+		linkify: true,
+		typographer: false
+	});
 </script>
 
 <script lang="ts">
@@ -26,32 +15,25 @@
 
 	let html = $state('');
 	let renderError = $state('');
-	let version = 0;
 
 	watch(
 		() => source,
-		(markdown) => {
-			const current = ++version;
+		(markdownSource) => {
 			renderError = '';
 
-			getProcessor()
-				.then((renderer) => renderer.render(escapeRawHTML(markdown)))
-				.then((result) => {
-					if (current !== version) return;
-					html = result.code;
-				})
-				.catch((err: unknown) => {
-					if (current !== version) return;
-					html = '';
-					renderError = err instanceof Error ? err.message : 'Could not render markdown.';
-				});
+			try {
+				html = parser.render(markdownSource);
+			} catch (err) {
+				html = '';
+				renderError = err instanceof Error ? err.message : 'Could not render markdown.';
+			}
 		}
 	);
 </script>
 
 {#if html}
 	<div class="markdown-output text-sm leading-relaxed">
-		<!-- eslint-disable-next-line svelte/no-at-html-tags -- raw HTML is escaped before markdown rendering -->
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -- markdown-it escapes raw HTML when html=false -->
 		{@html html}
 	</div>
 {:else}
