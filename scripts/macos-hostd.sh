@@ -91,6 +91,10 @@ write_wrapper() {
 		echo "CONFIG_FILE=$(quote "$config_file")"
 		echo "BIN=$(quote "$bin_path")"
 		echo
+		# launchd gives a bare PATH; add common user bin dirs so the daemon can
+		# discover agent CLIs (e.g. claude) installed outside the system path.
+		echo 'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"'
+		echo
 		echo 'if [[ -f "$CONFIG_FILE" ]]; then'
 		echo "	set -a"
 		echo "	source \"\$CONFIG_FILE\""
