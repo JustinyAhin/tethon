@@ -74,7 +74,11 @@ hub for now.
    ```yaml
    environment:
      TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
+     TETHON_HUB_AUTH_TOKENS: ${TETHON_HUB_AUTH_TOKENS:-}
    ```
+
+   `TETHON_HUB_AUTH_TOKENS` is optional. It is only needed during token
+   rotation.
 
 4. Configure the domain in Dokploy.
 
@@ -130,6 +134,88 @@ hub for now.
    ```
 
    `HUB_AUTH_TOKEN` should be a Worker secret.
+
+## Token Rotation
+
+The hub accepts one primary token plus optional additional accepted tokens:
+
+```txt
+TETHON_HUB_AUTH_TOKEN=<primary-token>
+TETHON_HUB_AUTH_TOKENS=<additional-token-1>,<additional-token-2>
+```
+
+Use this to rotate without downtime:
+
+1. Generate a new token:
+
+   ```sh
+   openssl rand -base64 48
+   ```
+
+2. In Dokploy, add the new token to `TETHON_HUB_AUTH_TOKENS`, leaving the old
+   `TETHON_HUB_AUTH_TOKEN` in place. Deploy the hub.
+
+3. Verify both old and new tokens work:
+
+   ```sh
+   curl -fsS -H "Authorization: Bearer <old-token>" https://hub.tethon.dev/hosts
+   curl -fsS -H "Authorization: Bearer <new-token>" https://hub.tethon.dev/hosts
+   ```
+
+4. Update the `tethon-web` Worker secret:
+
+   ```sh
+   cd web
+   bun wrangler secret put HUB_AUTH_TOKEN
+   bun deploy
+   ```
+
+5. Update each installed Mac host daemon config:
+
+   ```txt
+   ~/.config/tethon/hostd.env
+   ```
+
+   Set:
+
+   ```sh
+   TETHON_HUB_AUTH_TOKEN=<new-token>
+   ```
+
+   Restart the daemon:
+
+   ```sh
+   scripts/macos-hostd.sh restart
+   ```
+
+6. Update any local CLI shell/env setup that exports `TETHON_HUB_AUTH_TOKEN`.
+
+7. Promote the new token in Dokploy:
+
+   ```txt
+   TETHON_HUB_AUTH_TOKEN=<new-token>
+   TETHON_HUB_AUTH_TOKENS=
+   ```
+
+   Deploy the hub again.
+
+8. Confirm the old token fails and the new token still works:
+
+   ```sh
+   curl -i -H "Authorization: Bearer <old-token>" https://hub.tethon.dev/hosts
+   curl -fsS -H "Authorization: Bearer <new-token>" https://hub.tethon.dev/hosts
+   ```
+
+   The old token should return `401 Unauthorized`.
+
+For local development, dotenvx can be used as an optional convenience to load
+`TETHON_HUB_AUTH_TOKEN` for commands:
+
+```sh
+dotenvx run -- go run ./control/cmd/tethon hosts list --hub-url https://hub.tethon.dev
+```
+
+Do not use dotenvx for Dokploy or Cloudflare production secrets.
 
 ## Current Host Connectivity Caveat
 

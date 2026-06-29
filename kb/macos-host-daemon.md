@@ -54,6 +54,9 @@ Do not commit this file. After editing it, restart the daemon:
 scripts/macos-hostd.sh restart
 ```
 
+When rotating the hub token, update this file after the new token has been
+added to the hub's accepted token list. See `kb/hub-deploy-dokploy.md`.
+
 ## Operate
 
 Check launchd status:

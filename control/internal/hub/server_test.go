@@ -54,6 +54,36 @@ func TestHubRequiresBearerTokenWhenConfigured(t *testing.T) {
 	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "secret", http.StatusOK)
 }
 
+func TestHubAcceptsAdditionalBearerTokens(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthTokens("primary", "old, new\nalso-valid")
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "primary", http.StatusOK)
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "old", http.StatusOK)
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "new", http.StatusOK)
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "also-valid", http.StatusOK)
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "wrong", http.StatusUnauthorized)
+}
+
+func TestHubIgnoresBlankBearerTokens(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthTokens(" \n, ")
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "", http.StatusOK)
+}
+
+func TestParseAuthTokens(t *testing.T) {
+	got := ParseAuthTokens(" primary ", "old,new\n also-valid \n\n")
+	want := []string{"primary", "old", "new", "also-valid"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("ParseAuthTokens = %#v, want %#v", got, want)
+	}
+}
+
 func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
 	hub := New(time.Second)
 	hub.SetAuthToken("secret")

@@ -6,5 +6,6 @@ services:
     restart: unless-stopped
     environment:
       TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
+      TETHON_HUB_AUTH_TOKENS: ${TETHON_HUB_AUTH_TOKENS:-}
     expose:
       - "39180"

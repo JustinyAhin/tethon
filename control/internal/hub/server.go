@@ -26,7 +26,7 @@ type Server struct {
 	hostTimeout time.Duration
 	now         func() time.Time
 	client      *http.Client
-	authToken   string
+	authTokens  [][sha256.Size]byte
 }
 
 type hostRecord struct {
@@ -65,11 +65,33 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) SetAuthToken(token string) {
-	s.authToken = token
+	s.SetAuthTokens(token)
+}
+
+func (s *Server) SetAuthTokens(tokens ...string) {
+	s.authTokens = make([][sha256.Size]byte, 0, len(tokens))
+	for _, token := range ParseAuthTokens(tokens...) {
+		s.authTokens = append(s.authTokens, sha256.Sum256([]byte(token)))
+	}
+}
+
+func ParseAuthTokens(values ...string) []string {
+	tokens := make([]string, 0, len(values))
+	for _, value := range values {
+		for token := range strings.FieldsFuncSeq(value, func(r rune) bool {
+			return r == ',' || r == '\n'
+		}) {
+			token = strings.TrimSpace(token)
+			if token != "" {
+				tokens = append(tokens, token)
+			}
+		}
+	}
+	return tokens
 }
 
 func (s *Server) authorized(r *http.Request) bool {
-	if s.authToken == "" {
+	if len(s.authTokens) == 0 {
 		return true
 	}
 	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
@@ -80,9 +102,12 @@ func (s *Server) authorized(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
-	want := sha256.Sum256([]byte(s.authToken))
 	got := sha256.Sum256([]byte(token))
-	return subtle.ConstantTimeCompare(got[:], want[:]) == 1
+	matched := 0
+	for _, want := range s.authTokens {
+		matched |= subtle.ConstantTimeCompare(got[:], want[:])
+	}
+	return matched == 1
 }
 
 func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
