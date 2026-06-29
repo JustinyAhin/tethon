@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
-	import { streamSession } from '$lib/remote-functions/sessions.remote';
+	import { streamSession, sendInput } from '$lib/remote-functions/sessions.remote';
 	import type {
 		SessionEvent,
 		SessionStartedPayload,
@@ -48,6 +48,27 @@
 	$effect(() => {
 		if (events.length && logEl) logEl.scrollTo({ top: logEl.scrollHeight });
 	});
+
+	let text = $state('');
+	let sendError = $state('');
+
+	const send = async () => {
+		if (!text.trim() || sendInput.pending > 0) return;
+		const res = await sendInput({ id, text });
+		if (res.ok) {
+			text = '';
+			sendError = '';
+		} else {
+			sendError = res.error;
+		}
+	};
+
+	const onkeydown = (e: KeyboardEvent) => {
+		if (e.key === 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			send();
+		}
+	};
 </script>
 
 <section>
@@ -148,4 +169,29 @@
 			<p class="text-sm text-gray-500">Waiting for events…</p>
 		{/if}
 	</div>
+
+	{#if stream.done}
+		<p class="mt-4 text-sm text-gray-500">Session finished.</p>
+	{:else}
+		<div class="mt-4">
+			<div class="flex items-end gap-2">
+				<textarea
+					bind:value={text}
+					{onkeydown}
+					rows="2"
+					placeholder="Send a message… (Enter to send, Shift+Enter for newline)"
+					class="w-full rounded border p-2 text-sm"></textarea>
+				<button
+					onclick={send}
+					disabled={!text.trim() || sendInput.pending > 0}
+					class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+				>
+					{sendInput.pending > 0 ? 'Sending…' : 'Send'}
+				</button>
+			</div>
+			{#if sendError}
+				<p class="mt-1 text-xs text-red-600">{sendError}</p>
+			{/if}
+		</div>
+	{/if}
 </section>

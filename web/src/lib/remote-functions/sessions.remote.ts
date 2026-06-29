@@ -1,4 +1,4 @@
-import { form, query } from '$app/server';
+import { command, form, query } from '$app/server';
 import { error } from '@sveltejs/kit';
 import * as v from 'valibot';
 import type { CreateSessionResponse, SessionEvent, SessionSummary } from '$lib/types';
@@ -97,4 +97,22 @@ const streamSession = query.live(v.string(), async function* (id) {
 	}
 });
 
-export { getSessions, createSession, streamSession };
+const SendInputSchema = v.object({
+	id: v.pipe(v.string(), v.nonEmpty()),
+	text: v.pipe(v.string(), v.trim(), v.nonEmpty('Message is empty.'))
+});
+
+type SendResult = { ok: true } | { ok: false; error: string };
+
+const sendInput = command(SendInputSchema, async ({ id, text }): Promise<SendResult> => {
+	const base = hubBase();
+	const res = await fetch(`${base}/sessions/${id}/input`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ text })
+	});
+	if (!res.ok) return { ok: false, error: await hubErrorMessage(res) };
+	return { ok: true };
+});
+
+export { getSessions, createSession, streamSession, sendInput };
