@@ -40,6 +40,8 @@
 	let replyText = $state<Record<string, string>>({});
 	let approvalError = $state<Record<string, string>>({});
 	let approvalSubmitting = $state<Record<string, boolean>>({});
+	let copyStatus = $state('');
+	let copyError = $state('');
 
 	const status = $derived(
 		streamError ? 'error' : done ? 'finished' : connected ? 'live' : 'connecting…'
@@ -183,6 +185,91 @@
 		}
 	};
 
+	const formatPayload = (payload: unknown): string => {
+		if (payload == null) return '';
+		if (typeof payload === 'string') return payload;
+		return JSON.stringify(payload, null, 2);
+	};
+
+	const eventTranscript = (event: SessionEvent): string => {
+		switch (event.type) {
+			case 'session_started': {
+				const p = event.payload as SessionStartedPayload;
+				const lines = [
+					`## Session started`,
+					`- seq: ${event.seq}`,
+					`- repo: ${p.repo ?? ''}`,
+					`- cwd: ${p.cwd ?? ''}`,
+					`- branch: ${p.branch ?? ''}`,
+					`- agent: ${p.agent ?? ''}`
+				];
+				if (p.permission_mode) lines.push(`- permission_mode: ${p.permission_mode}`);
+				if (p.prompt) lines.push('', `Prompt:`, p.prompt);
+				return lines.join('\n');
+			}
+			case 'input_received':
+				return `## User\n\n${(event.payload as InputReceivedPayload).text}`;
+			case 'output':
+				return `## Agent\n\n${(event.payload as OutputPayload).text}`;
+			case 'awaiting_approval': {
+				const p = event.payload as ApprovalPayload;
+				const lines = [
+					`## Awaiting approval`,
+					`- request_id: ${p.request_id}`,
+					`- command: ${p.command || p.tool_name || 'tool request'}`
+				];
+				if (p.reason) lines.push(`- reason: ${p.reason}`);
+				if (p.agent) lines.push(`- agent: ${p.agent}`);
+				if (p.tool_name) lines.push(`- tool: ${p.tool_name}`);
+				if (p.tool_input)
+					lines.push('', 'Tool input:', '```json', formatPayload(p.tool_input), '```');
+				return lines.join('\n');
+			}
+			case 'approval_resolved': {
+				const p = event.payload as ApprovalResolvedPayload;
+				return `## Approval resolved\n\n- request_id: ${p.request_id}\n- action: ${p.action}${p.text ? `\n\n${p.text}` : ''}`;
+			}
+			case 'usage': {
+				const p = event.payload as UsagePayload;
+				return `## Usage\n\n- model: ${p.model ?? ''}\n- total_billable: ${p.tokens?.total_billable ?? 0}${p.cost ? `\n- total_usd: ${p.cost.total_usd}` : ''}`;
+			}
+			case 'done':
+				return `## Done\n\n${(event.payload as DonePayload).reason}`;
+			case 'error':
+				return `## Error\n\n${(event.payload as ErrorPayload).message}`;
+			default:
+				return `## ${event.type}\n\n\`\`\`json\n${formatPayload(event.payload)}\n\`\`\``;
+		}
+	};
+
+	const transcriptText = () =>
+		[`# Tethon session transcript`, ``, `Session: ${id}`, `Events: ${events.length}`, ``]
+			.concat(events.map(eventTranscript))
+			.join('\n\n');
+
+	const debugJSON = () =>
+		JSON.stringify(
+			{
+				session_id: id,
+				exported_at: new Date().toISOString(),
+				event_count: events.length,
+				events
+			},
+			null,
+			2
+		);
+
+	const copyText = async (label: string, value: string) => {
+		copyStatus = '';
+		copyError = '';
+		try {
+			await navigator.clipboard.writeText(value);
+			copyStatus = `${label} copied`;
+		} catch (err) {
+			copyError = err instanceof Error ? err.message : `Could not copy ${label.toLowerCase()}.`;
+		}
+	};
+
 	const submitApproval = async ({
 		requestID,
 		action
@@ -230,12 +317,12 @@
 </script>
 
 <section>
-	<div class="mb-4 flex items-center justify-between gap-2">
+	<div class="mb-4 flex flex-wrap items-center justify-between gap-2">
 		<div>
 			<h1 class="text-xl font-semibold">Session</h1>
 			<p class="text-xs text-gray-500">{id}</p>
 		</div>
-		<div class="flex items-center gap-3 text-sm">
+		<div class="flex flex-wrap items-center justify-end gap-3 text-sm">
 			<span
 				class="rounded-full px-2 py-0.5 text-xs font-medium {status === 'live'
 					? 'bg-green-100 text-green-700'
@@ -245,6 +332,20 @@
 			>
 				{status}
 			</span>
+			<button
+				class="text-gray-600 hover:underline disabled:text-gray-300 disabled:no-underline"
+				onclick={() => copyText('Transcript', transcriptText())}
+				disabled={events.length === 0}
+			>
+				Copy transcript
+			</button>
+			<button
+				class="text-gray-600 hover:underline disabled:text-gray-300 disabled:no-underline"
+				onclick={() => copyText('Debug JSON', debugJSON())}
+				disabled={events.length === 0}
+			>
+				Copy debug JSON
+			</button>
 			<button class="text-blue-600 hover:underline" onclick={reconnect}> Reconnect </button>
 			{#if !done && !streamError}
 				<button
@@ -282,6 +383,18 @@
 	{#if streamError}
 		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
 			Stream error: {streamError}
+		</p>
+	{/if}
+
+	{#if copyStatus}
+		<p class="mb-3 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+			{copyStatus}
+		</p>
+	{/if}
+
+	{#if copyError}
+		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+			{copyError}
 		</p>
 	{/if}
 
