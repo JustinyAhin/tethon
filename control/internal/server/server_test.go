@@ -266,8 +266,40 @@ func TestClaudeAgentSessionStreamsMappedOutput(t *testing.T) {
 	if payload.Text != "real output" {
 		t.Fatalf("output = %q, want real output", payload.Text)
 	}
-	if len(runner.specs) != 1 || runner.specs[0].Args[len(runner.specs[0].Args)-1] != "say hi" {
+	var started protocol.CreateSessionRequest
+	if err := json.Unmarshal(events[0].Payload, &started); err != nil {
+		t.Fatal(err)
+	}
+	if started.PermissionMode != "default" {
+		t.Fatalf("permission_mode = %q, want default", started.PermissionMode)
+	}
+	if len(runner.specs) != 1 || runner.specs[0].Args[len(runner.specs[0].Args)-1] != "say hi" || !strings.Contains(strings.Join(runner.specs[0].Args, " "), "--permission-mode default") {
 		t.Fatalf("unexpected claude command specs: %+v", runner.specs)
+	}
+}
+
+func TestCreateSessionValidatesPermissionMode(t *testing.T) {
+	claudeTS := newTestServerWithAgents(t, agent.NewRegistry(agent.NewClaude(agent.ClaudeConfig{
+		Binary: "claude",
+		Runner: &serverFakeCommandRunner{output: `{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n"},
+	})))
+
+	if status := postJSONStatus(t, claudeTS.URL+"/sessions", protocol.CreateSessionRequest{
+		Repo:           ".",
+		Agent:          "claude-cli",
+		Prompt:         "hi",
+		PermissionMode: "invalid",
+	}); status != http.StatusBadRequest {
+		t.Fatalf("invalid claude permission mode returned %d, want 400", status)
+	}
+
+	fakeTS := newTestServerWithAgents(t, agent.NewRegistry(agent.NewFake()))
+	if status := postJSONStatus(t, fakeTS.URL+"/sessions", protocol.CreateSessionRequest{
+		Repo:           ".",
+		Agent:          "fake",
+		PermissionMode: "default",
+	}); status != http.StatusBadRequest {
+		t.Fatalf("fake permission mode returned %d, want 400", status)
 	}
 }
 

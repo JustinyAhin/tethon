@@ -193,6 +193,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown agent")
 		return
 	}
+	if err := normalizePermissionMode(&req); err != nil {
+		s.logger.Warn("session_create_rejected", "agent", req.Agent, "permission_mode", req.PermissionMode, "reason", err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	resolved, err := s.resolveRepo(req)
 	if err != nil {
@@ -278,6 +283,23 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("session_agent_started", "session_id", session.ID, "agent", session.Agent)
 
 	writeJSON(w, http.StatusCreated, protocol.CreateSessionResponse{ID: session.ID, Status: session.Status})
+}
+
+func normalizePermissionMode(req *protocol.CreateSessionRequest) error {
+	if req.Agent != "claude-cli" {
+		if req.PermissionMode != "" {
+			return fmt.Errorf("permission_mode is only supported for claude-cli")
+		}
+		return nil
+	}
+	if req.PermissionMode == "" {
+		req.PermissionMode = agent.ClaudePermissionModeDefault
+		return nil
+	}
+	if !agent.ValidClaudePermissionMode(req.PermissionMode) {
+		return fmt.Errorf("invalid permission_mode")
+	}
+	return nil
 }
 
 // resolveRealDir validates that path is an existing directory and resolves it

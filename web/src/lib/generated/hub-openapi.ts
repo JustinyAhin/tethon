@@ -188,6 +188,7 @@ export interface components {
 			branch: string;
 			cwd: string;
 			host_id?: string;
+			permission_mode?: string;
 			prompt?: string;
 			repo?: string;
 			repo_id?: string;

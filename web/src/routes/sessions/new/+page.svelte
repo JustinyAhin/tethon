@@ -9,6 +9,8 @@
 
 	const lastHost = new PersistedState('tethon:lastHost', '');
 	let selectedHostId = $state(page.url.searchParams.get('host') ?? lastHost.current);
+	let selectedAgent = $state('');
+	let permissionMode = $state('default');
 	let useRawRepo = $state(false);
 
 	watch(
@@ -83,13 +85,31 @@
 
 		<label class="block">
 			<span class="text-sm font-medium">Agent</span>
-			<select name="agent" class="mt-1 w-full rounded border p-2">
+			<select name="agent" bind:value={selectedAgent} class="mt-1 w-full rounded border p-2">
 				<option value="">default (fake)</option>
 				{#each agents as a (a)}
 					<option value={a}>{a}</option>
 				{/each}
 			</select>
 		</label>
+
+		{#if selectedAgent === 'claude-cli'}
+			<label class="block">
+				<span class="text-sm font-medium">Permission mode</span>
+				<select
+					name="permission_mode"
+					bind:value={permissionMode}
+					class="mt-1 w-full rounded border p-2"
+				>
+					<option value="default">default</option>
+					<option value="acceptEdits">acceptEdits</option>
+					<option value="auto">auto</option>
+					<option value="bypassPermissions">bypassPermissions</option>
+					<option value="dontAsk">dontAsk</option>
+					<option value="plan">plan</option>
+				</select>
+			</label>
+		{/if}
 
 		<label class="block">
 			<span class="text-sm font-medium">cwd <span class="text-gray-400">(optional)</span></span>

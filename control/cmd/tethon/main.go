@@ -97,6 +97,7 @@ func sessionStart(args []string) error {
 	branch := fs.String("branch", "", "branch")
 	agent := fs.String("agent", "fake", "agent")
 	prompt := fs.String("prompt", "", "initial prompt")
+	permissionMode := fs.String("permission-mode", "", "Claude permission mode")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -107,12 +108,13 @@ func sessionStart(args []string) error {
 
 	var resp protocol.CreateSessionResponse
 	return postJSON(hubEndpoint(*hubURL, "/sessions"), *authToken, protocol.CreateSessionRequest{
-		HostID: *hostID,
-		Repo:   *repo,
-		CWD:    *cwd,
-		Branch: *branch,
-		Agent:  *agent,
-		Prompt: initialPrompt,
+		HostID:         *hostID,
+		Repo:           *repo,
+		CWD:            *cwd,
+		Branch:         *branch,
+		Agent:          *agent,
+		Prompt:         initialPrompt,
+		PermissionMode: *permissionMode,
 	}, &resp, os.Stdout)
 }
 

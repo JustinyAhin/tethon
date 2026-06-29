@@ -119,6 +119,29 @@ type claudeAdapter struct {
 	extraEnv             []string
 }
 
+const ClaudePermissionModeDefault = "default"
+
+var claudePermissionModes = map[string]struct{}{
+	"acceptEdits":               {},
+	"auto":                      {},
+	"bypassPermissions":         {},
+	ClaudePermissionModeDefault: {},
+	"dontAsk":                   {},
+	"plan":                      {},
+}
+
+func ValidClaudePermissionMode(mode string) bool {
+	_, ok := claudePermissionModes[mode]
+	return ok
+}
+
+func claudePermissionMode(mode string) string {
+	if ValidClaudePermissionMode(mode) {
+		return mode
+	}
+	return ClaudePermissionModeDefault
+}
+
 func NewClaude(config ClaudeConfig) Adapter {
 	binary := config.Binary
 	if binary == "" {
@@ -173,10 +196,11 @@ func (a *claudeAdapter) Start(ctx context.Context, req StartRequest, sink Sink) 
 	}
 
 	session := &claudeSession{
-		adapter:   a,
-		sink:      sink,
-		sessionID: req.Session.ID,
-		workDir:   resolveWorkDir(req),
+		adapter:        a,
+		sink:           sink,
+		sessionID:      req.Session.ID,
+		workDir:        resolveWorkDir(req),
+		permissionMode: claudePermissionMode(req.Create.PermissionMode),
 	}
 	if _, err := sink.AppendEvent(ctx, protocol.EventSessionStarted, req.Create); err != nil {
 		return nil, err
@@ -204,6 +228,7 @@ type claudeSession struct {
 	claudeSessionID string
 	model           string
 	pending         map[string]claudeApproval
+	permissionMode  string
 }
 
 type claudeApproval struct {
@@ -329,7 +354,7 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string
 		return err
 	}
 
-	args := []string{"-p", "--verbose", "--output-format", "stream-json", "--include-hook-events"}
+	args := []string{"-p", "--verbose", "--output-format", "stream-json", "--include-hook-events", "--permission-mode", s.permissionMode}
 	if claudeSessionID != "" {
 		args = append(args, "--resume", claudeSessionID)
 	}

@@ -68,14 +68,15 @@ type ListHostsResponse struct {
 }
 
 type CreateSessionRequest struct {
-	HostID  string `json:"host_id,omitempty"`
-	RepoID  string `json:"repo_id,omitempty"`
-	Repo    string `json:"repo,omitempty"`
-	CWD     string `json:"cwd"`
-	Branch  string `json:"branch"`
-	BaseRef string `json:"base_ref,omitempty"`
-	Agent   string `json:"agent"`
-	Prompt  string `json:"prompt,omitempty"`
+	HostID         string `json:"host_id,omitempty"`
+	RepoID         string `json:"repo_id,omitempty"`
+	Repo           string `json:"repo,omitempty"`
+	CWD            string `json:"cwd"`
+	Branch         string `json:"branch"`
+	BaseRef        string `json:"base_ref,omitempty"`
+	Agent          string `json:"agent"`
+	Prompt         string `json:"prompt,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
 }
 
 type SessionStartedPayload = CreateSessionRequest

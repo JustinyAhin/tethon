@@ -43,9 +43,38 @@ func TestClaudeStartMapsAssistantOutput(t *testing.T) {
 	if len(specs) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(specs))
 	}
-	wantArgs := []string{"-p", "--verbose", "--output-format", "stream-json", "--include-hook-events", "say hello"}
+	wantArgs := []string{"-p", "--verbose", "--output-format", "stream-json", "--include-hook-events", "--permission-mode", "default", "say hello"}
 	if strings.Join(specs[0].Args, "\x00") != strings.Join(wantArgs, "\x00") {
 		t.Fatalf("args = %#v, want %#v", specs[0].Args, wantArgs)
+	}
+}
+
+func TestClaudeStartPassesExplicitPermissionMode(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n",
+	}}
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	_, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create: protocol.CreateSessionRequest{
+			Repo:           ".",
+			Agent:          "claude-cli",
+			Prompt:         "hi",
+			PermissionMode: "plan",
+		},
+	}, newMemorySink())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := runner.specs()
+	if len(specs) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(specs))
+	}
+	got := strings.Join(specs[0].Args, " ")
+	if !strings.Contains(got, "--permission-mode plan") {
+		t.Fatalf("args = %#v, want permission mode plan", specs[0].Args)
 	}
 }
 
@@ -132,6 +161,9 @@ func TestClaudeInputResumesCapturedSession(t *testing.T) {
 	if !strings.Contains(got, "--resume claude_1") {
 		t.Fatalf("second command did not resume captured session: %#v", specs[1].Args)
 	}
+	if !strings.Contains(got, "--permission-mode default") {
+		t.Fatalf("second command did not include permission mode: %#v", specs[1].Args)
+	}
 }
 
 func TestClaudeDeferredToolMapsToApprovalAndResolutionResumes(t *testing.T) {
@@ -174,6 +206,9 @@ func TestClaudeDeferredToolMapsToApprovalAndResolutionResumes(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(specs[1].Args, " "), "--resume claude_1") {
 		t.Fatalf("approval command did not resume captured session: %#v", specs[1].Args)
+	}
+	if !strings.Contains(strings.Join(specs[1].Args, " "), "--permission-mode default") {
+		t.Fatalf("approval command did not include permission mode: %#v", specs[1].Args)
 	}
 }
 

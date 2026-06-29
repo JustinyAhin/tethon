@@ -32,6 +32,9 @@
 					"host_id": {
 						"type": "string"
 					},
+					"permission_mode": {
+						"type": "string"
+					},
 					"prompt": {
 						"type": "string"
 					},

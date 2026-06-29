@@ -45,6 +45,7 @@ const CreateSessionSchema = v.pipe(
 		branch: optionalText,
 		base_ref: optionalText,
 		agent: optionalText,
+		permission_mode: optionalText,
 		prompt: optionalText
 	}),
 	v.forward(
@@ -65,6 +66,7 @@ const createSession = form(CreateSessionSchema, async (data): Promise<CreateResu
 	if (data.repo_id) body.repo_id = data.repo_id;
 	else if (data.repo) body.repo = data.repo;
 	if (data.base_ref) body.base_ref = data.base_ref;
+	if (data.permission_mode) body.permission_mode = data.permission_mode;
 	if (data.prompt) body.prompt = data.prompt;
 
 	try {

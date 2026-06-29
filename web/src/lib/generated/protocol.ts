@@ -66,6 +66,7 @@ export interface CreateSessionRequest {
 	base_ref?: string;
 	agent: string;
 	prompt?: string;
+	permission_mode?: string;
 }
 export type SessionStartedPayload = CreateSessionRequest;
 export interface CreateSessionResponse {
