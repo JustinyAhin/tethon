@@ -43,9 +43,10 @@ func TestClaudeStartMapsAssistantOutput(t *testing.T) {
 	if len(specs) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(specs))
 	}
-	wantArgs := []string{"-p", "--verbose", "--output-format", "stream-json", "--include-hook-events", "--permission-mode", "default", "say hello"}
-	if strings.Join(specs[0].Args, "\x00") != strings.Join(wantArgs, "\x00") {
-		t.Fatalf("args = %#v, want %#v", specs[0].Args, wantArgs)
+	assertArgsContain(t, specs[0].Args, "--permission-mode", "default")
+	assertArgsContain(t, specs[0].Args, "--settings")
+	if got := specs[0].Args[len(specs[0].Args)-1]; got != "say hello" {
+		t.Fatalf("last arg = %q, want prompt", got)
 	}
 }
 
@@ -75,6 +76,29 @@ func TestClaudeStartPassesExplicitPermissionMode(t *testing.T) {
 	got := strings.Join(specs[0].Args, " ")
 	if !strings.Contains(got, "--permission-mode plan") {
 		t.Fatalf("args = %#v, want permission mode plan", specs[0].Args)
+	}
+}
+
+func TestClaudeStartConfiguresPreToolUseDeferHook(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n",
+	}}
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, HookHelperBinary: "/tmp/tethon-hostd"})
+
+	_, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "hi"},
+	}, newMemorySink())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := runner.specs()
+	settings := argAfter(t, specs[0].Args, "--settings")
+	if !strings.Contains(settings, `"PreToolUse"`) ||
+		!strings.Contains(settings, `TETHON_CLAUDE_HOOK_MODE='defer'`) ||
+		!strings.Contains(settings, `/tmp/tethon-hostd`) {
+		t.Fatalf("settings = %s", settings)
 	}
 }
 
@@ -209,6 +233,14 @@ func TestClaudeDeferredToolMapsToApprovalAndResolutionResumes(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(specs[1].Args, " "), "--permission-mode default") {
 		t.Fatalf("approval command did not include permission mode: %#v", specs[1].Args)
+	}
+	if got := specs[1].Args[len(specs[1].Args)-1]; got != "claude_1" {
+		t.Fatalf("approval command should end at resumed session id, got last arg %q in %#v", got, specs[1].Args)
+	}
+	settings := argAfter(t, specs[1].Args, "--settings")
+	if !strings.Contains(settings, `TETHON_CLAUDE_HOOK_MODE='approve'`) ||
+		!strings.Contains(settings, `TETHON_CLAUDE_HOOK_REQUEST_ID='tool_1'`) {
+		t.Fatalf("approval settings = %s", settings)
 	}
 }
 
@@ -459,6 +491,58 @@ func TestClaudeInputWhileRunningReturnsBusy(t *testing.T) {
 	}
 }
 
+func TestRunClaudeHookDecisions(t *testing.T) {
+	cases := []struct {
+		name       string
+		env        map[string]string
+		want       string
+		wantInput  string
+		wantReason string
+	}{
+		{name: "defer", env: map[string]string{"TETHON_CLAUDE_HOOK_MODE": "defer"}, want: "defer"},
+		{
+			name:      "approve matching tool",
+			env:       map[string]string{"TETHON_CLAUDE_HOOK_MODE": "approve", "TETHON_CLAUDE_HOOK_REQUEST_ID": "tool_1"},
+			want:      "allow",
+			wantInput: `{"command":"git rm AGENTS.md"}`,
+		},
+		{
+			name:       "deny matching tool",
+			env:        map[string]string{"TETHON_CLAUDE_HOOK_MODE": "deny", "TETHON_CLAUDE_HOOK_REQUEST_ID": "tool_1", "TETHON_CLAUDE_HOOK_TEXT": "no"},
+			want:       "deny",
+			wantReason: "no",
+		},
+		{
+			name: "mismatched tool stays deferred",
+			env:  map[string]string{"TETHON_CLAUDE_HOOK_MODE": "approve", "TETHON_CLAUDE_HOOK_REQUEST_ID": "other"},
+			want: "defer",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_use_id":"tool_1","tool_input":{"command":"git rm AGENTS.md"}}`)
+			var out bytes.Buffer
+			if err := RunClaudeHook(in, &out, func(key string) string { return tc.env[key] }); err != nil {
+				t.Fatal(err)
+			}
+			var got claudeHookOutput
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.HookSpecificOutput.PermissionDecision != tc.want {
+				t.Fatalf("decision = %q, want %q; output %s", got.HookSpecificOutput.PermissionDecision, tc.want, out.String())
+			}
+			if tc.wantInput != "" && string(got.HookSpecificOutput.UpdatedInput) != tc.wantInput {
+				t.Fatalf("updatedInput = %s, want %s", got.HookSpecificOutput.UpdatedInput, tc.wantInput)
+			}
+			if got.HookSpecificOutput.PermissionDecisionReason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", got.HookSpecificOutput.PermissionDecisionReason, tc.wantReason)
+			}
+		})
+	}
+}
+
 type fakeCommandRunner struct {
 	mu      sync.Mutex
 	outputs []string
@@ -495,6 +579,34 @@ func (r *fakeCommandRunner) waitForSpecs(t *testing.T, count int) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %d command specs", count)
+}
+
+func assertArgsContain(t *testing.T, args []string, want ...string) {
+	t.Helper()
+	for i := 0; i <= len(args)-len(want); i++ {
+		matched := true
+		for j := range want {
+			if args[i+j] != want[j] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return
+		}
+	}
+	t.Fatalf("args = %#v, want sequence %#v", args, want)
+}
+
+func argAfter(t *testing.T, args []string, name string) string {
+	t.Helper()
+	for i, arg := range args {
+		if arg == name && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	t.Fatalf("args = %#v, missing %s", args, name)
+	return ""
 }
 
 type fakeProcess struct {

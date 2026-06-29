@@ -25,6 +25,7 @@ type ClaudeConfig struct {
 	KillDelay            time.Duration
 	Logger               *slog.Logger
 	Runner               CommandRunner
+	HookHelperBinary     string
 	// ExtraEnv is added to every spawned agent process (KEY=VALUE), overriding
 	// any inherited value. The host uses it to point build/dependency caches at
 	// a shared directory so worktrees do not each duplicate them.
@@ -117,6 +118,7 @@ type claudeAdapter struct {
 	logger               *slog.Logger
 	runner               CommandRunner
 	extraEnv             []string
+	hookHelperBinary     string
 }
 
 const ClaudePermissionModeDefault = "default"
@@ -159,6 +161,12 @@ func NewClaude(config ClaudeConfig) Adapter {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	hookHelperBinary := config.HookHelperBinary
+	if hookHelperBinary == "" {
+		if executable, err := os.Executable(); err == nil {
+			hookHelperBinary = executable
+		}
+	}
 	return &claudeAdapter{
 		binary:               binary,
 		allowAnthropicAPIKey: config.AllowAnthropicAPIKey,
@@ -166,6 +174,7 @@ func NewClaude(config ClaudeConfig) Adapter {
 		logger:               logger,
 		runner:               runner,
 		extraEnv:             config.ExtraEnv,
+		hookHelperBinary:     hookHelperBinary,
 	}
 }
 
@@ -205,7 +214,7 @@ func (a *claudeAdapter) Start(ctx context.Context, req StartRequest, sink Sink) 
 	if _, err := sink.AppendEvent(ctx, protocol.EventSessionStarted, req.Create); err != nil {
 		return nil, err
 	}
-	if err := session.startTurn(ctx, prompt, ""); err != nil {
+	if err := session.startTurn(ctx, prompt, claudeHookDecision{Mode: claudeHookModeDefer}, ""); err != nil {
 		return nil, err
 	}
 	return session, nil
@@ -237,6 +246,12 @@ type claudeApproval struct {
 	ToolInput json.RawMessage
 }
 
+type claudeHookDecision struct {
+	Mode      string
+	RequestID string
+	Text      string
+}
+
 func (s *claudeSession) Input(ctx context.Context, text string) ([]protocol.Event, error) {
 	if err := s.checkCanStart(); err != nil {
 		s.adapter.logger.Warn("agent_input_rejected", "agent", "claude-cli", "session_id", s.sessionID, "text_len", len(text), "reason", err.Error())
@@ -247,7 +262,7 @@ func (s *claudeSession) Input(ctx context.Context, text string) ([]protocol.Even
 	if err != nil {
 		return nil, err
 	}
-	if err := s.startTurn(ctx, text, ""); err != nil {
+	if err := s.startTurn(ctx, text, claudeHookDecision{Mode: claudeHookModeDefer}, ""); err != nil {
 		return nil, err
 	}
 	return []protocol.Event{event}, nil
@@ -270,8 +285,7 @@ func (s *claudeSession) ResolveApproval(ctx context.Context, requestID, action, 
 		return nil, err
 	}
 
-	prompt := s.approvalPrompt(requestID, action, text)
-	if err := s.startTurn(ctx, prompt, requestID); err != nil {
+	if err := s.startTurn(ctx, "", claudeHookDecision{Mode: action, RequestID: requestID, Text: text}, requestID); err != nil {
 		return nil, err
 	}
 	return []protocol.Event{resolved}, nil
@@ -333,7 +347,7 @@ func (s *claudeSession) checkCanStart() error {
 	}
 }
 
-func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string) error {
+func (s *claudeSession) startTurn(ctx context.Context, prompt string, hook claudeHookDecision, approvalID string) error {
 	s.mu.Lock()
 	if s.terminal {
 		s.mu.Unlock()
@@ -354,11 +368,19 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string
 		return err
 	}
 
-	args := []string{"-p", "--verbose", "--output-format", "stream-json", "--include-hook-events", "--permission-mode", s.permissionMode}
+	settings, err := s.hookSettings(hook)
+	if err != nil {
+		s.finishTurn()
+		return err
+	}
+
+	args := []string{"-p", "--verbose", "--output-format", "stream-json", "--include-hook-events", "--permission-mode", s.permissionMode, "--settings", settings}
 	if claudeSessionID != "" {
 		args = append(args, "--resume", claudeSessionID)
 	}
-	args = append(args, prompt)
+	if prompt != "" {
+		args = append(args, prompt)
+	}
 	s.adapter.logger.Info("agent_turn_start", "agent", "claude-cli", "session_id", s.sessionID, "cwd", s.workDir, "resume", claudeSessionID != "", "prompt_len", len(prompt))
 
 	process, err := s.adapter.runner.Start(runCtx, CommandSpec{
@@ -381,6 +403,43 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt, approvalID string
 
 	go s.runTurn(runCtx, process, approvalID, done)
 	return nil
+}
+
+func (s *claudeSession) hookSettings(hook claudeHookDecision) (string, error) {
+	if s.adapter.hookHelperBinary == "" {
+		return "", errors.New("claude hook helper binary is required")
+	}
+	if hook.Mode == "" {
+		hook.Mode = claudeHookModeDefer
+	}
+	command := strings.Join([]string{
+		"env",
+		"TETHON_CLAUDE_HOOK_MODE=" + shellQuote(hook.Mode),
+		"TETHON_CLAUDE_HOOK_REQUEST_ID=" + shellQuote(hook.RequestID),
+		"TETHON_CLAUDE_HOOK_TEXT=" + shellQuote(hook.Text),
+		shellQuote(s.adapter.hookHelperBinary),
+		"claude-hook",
+	}, " ")
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher": ".*",
+					"hooks": []any{
+						map[string]string{
+							"type":    "command",
+							"command": command,
+						},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func (s *claudeSession) finishTurn() {
@@ -607,33 +666,6 @@ func (s *claudeSession) createApproval(ctx context.Context, approval claudeAppro
 	s.pending[payload.RequestID] = approval
 	s.mu.Unlock()
 	return nil
-}
-
-func (s *claudeSession) approvalPrompt(requestID, action, text string) string {
-	s.mu.Lock()
-	approval := s.pending[requestID]
-	s.mu.Unlock()
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "Tethon resolved the pending Claude tool request %q with action %q.", requestID, action)
-	if approval.ToolName != "" {
-		fmt.Fprintf(&b, "\nTool: %s", approval.ToolName)
-	}
-	if len(approval.ToolInput) > 0 {
-		fmt.Fprintf(&b, "\nTool input: %s", string(approval.ToolInput))
-	}
-	if text != "" {
-		fmt.Fprintf(&b, "\nUser reply: %s", text)
-	}
-	switch action {
-	case "approve":
-		b.WriteString("\nContinue from the pending request if possible.")
-	case "deny":
-		b.WriteString("\nDo not run the pending tool. Explain the denial and continue with a safe alternative if possible.")
-	case "reply":
-		b.WriteString("\nUse the user reply as guidance before continuing.")
-	}
-	return b.String()
 }
 
 func (s *claudeSession) markCancelled(ctx context.Context) ([]protocol.Event, error) {

@@ -53,6 +53,10 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "claude-hook" {
+		return agent.RunClaudeHook(os.Stdin, os.Stdout, os.Getenv)
+	}
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "localhost"
