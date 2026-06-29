@@ -6,6 +6,7 @@ import type { HostSummary, SessionSummary } from '$lib/types';
 type HubErrorBody = components['schemas']['HubStatusError'];
 type CreateSessionRequest = components['schemas']['CreateSessionRequest'];
 type ResolveApprovalRequest = components['schemas']['ResolveApprovalRequest'];
+type RepoRefsResponse = components['schemas']['RepoRefsResponse'];
 
 class HubAPIError extends Error {
 	status: number;
@@ -76,6 +77,23 @@ const listHosts = async ({ baseUrl }: { baseUrl: string }): Promise<HostSummary[
 const listSessions = async ({ baseUrl }: { baseUrl: string }): Promise<SessionSummary[]> => {
 	const data = unwrap(await createHubClient(baseUrl).GET('/sessions'));
 	return (data.sessions ?? []).map(normalizeSession);
+};
+
+const listRepoRefs = async ({
+	baseUrl,
+	hostId,
+	repoId
+}: {
+	baseUrl: string;
+	hostId: string;
+	repoId: string;
+}): Promise<RepoRefsResponse> => {
+	const data = unwrap(
+		await createHubClient(baseUrl).GET('/repos/{host_id}/{repo_id}/refs', {
+			params: { path: { host_id: hostId, repo_id: repoId } }
+		})
+	);
+	return { branches: data.branches ?? [], tags: data.tags ?? [] };
 };
 
 const createSession = async ({
@@ -181,9 +199,10 @@ export {
 	createSession,
 	deleteSession,
 	listHosts,
+	listRepoRefs,
 	listSessions,
 	openSessionStream,
 	resolveApproval,
 	sendInput
 };
-export type { CreateSessionRequest };
+export type { CreateSessionRequest, RepoRefsResponse };

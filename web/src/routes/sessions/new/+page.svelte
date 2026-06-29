@@ -3,20 +3,24 @@
 	import { goto } from '$app/navigation';
 	import { PersistedState, watch } from 'runed';
 	import { getHosts } from '$lib/remote-functions/hosts.remote';
+	import { getRepoRefs } from '$lib/remote-functions/repos.remote';
 	import { createSession } from '$lib/remote-functions/sessions.remote';
 
 	const hosts = getHosts();
 
 	const lastHost = new PersistedState('tethon:lastHost', '');
 	let selectedHostId = $state(page.url.searchParams.get('host') ?? lastHost.current);
+	let selectedRepoId = $state('');
 	let selectedAgent = $state('');
 	let permissionMode = $state('default');
 	let useRawRepo = $state(false);
+	let baseRef = $state('');
 
 	watch(
 		() => selectedHostId,
 		(id) => {
 			lastHost.current = id;
+			selectedRepoId = '';
 		}
 	);
 
@@ -35,6 +39,25 @@
 	const repos = $derived(selectedHost?.repos ?? []);
 	const agents = $derived(selectedHost?.agents ?? []);
 	const rawRepo = $derived(useRawRepo || repos.length === 0);
+
+	// Prefill an editable default ref whenever the chosen repo changes; a blank
+	// selection clears it. The user can still type any branch, tag, or raw SHA.
+	watch(
+		() => selectedRepoId,
+		(id) => {
+			baseRef = repos.find((r) => r.id === id)?.default_branch ?? '';
+		}
+	);
+
+	const refs = $derived.by(() => {
+		if (rawRepo || !selectedHostId || !selectedRepoId) return undefined;
+		return getRepoRefs({ host_id: selectedHostId, repo_id: selectedRepoId });
+	});
+	const refOptions = $derived.by(() => {
+		const current = refs?.current;
+		if (!current?.ok) return [];
+		return [...current.branches, ...current.tags];
+	});
 </script>
 
 <section class="max-w-xl">
@@ -68,8 +91,8 @@
 		{:else}
 			<label class="block">
 				<span class="text-sm font-medium">Repo</span>
-				<select name="repo_id" class="mt-1 w-full rounded border p-2">
-					<option value="" disabled selected>Select a repo…</option>
+				<select name="repo_id" bind:value={selectedRepoId} class="mt-1 w-full rounded border p-2">
+					<option value="" disabled>Select a repo…</option>
 					{#each repos as r (r.id)}
 						<option value={r.id}>{r.name}</option>
 					{/each}
@@ -126,7 +149,20 @@
 				<span class="text-sm font-medium"
 					>base_ref <span class="text-gray-400">(optional)</span></span
 				>
-				<input name="base_ref" class="mt-1 w-full rounded border p-2" />
+				<input
+					name="base_ref"
+					list="base-refs"
+					bind:value={baseRef}
+					placeholder="branch, tag, or SHA"
+					class="mt-1 w-full rounded border p-2"
+				/>
+				{#if !rawRepo}
+					<datalist id="base-refs">
+						{#each refOptions as ref (ref)}
+							<option value={ref}></option>
+						{/each}
+					</datalist>
+				{/if}
 			</label>
 		</div>
 
