@@ -260,6 +260,56 @@ func TestListSessionSummariesReturnsAllSessionsWithLastSeq(t *testing.T) {
 	}
 }
 
+func TestDeleteTerminalSessionRemovesSessionState(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake", Status: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendEvent(ctx, session.ID, protocol.EventDone, protocol.DonePayload{Reason: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	payload := protocol.ApprovalPayload{RequestID: "req_1", Command: "test", Reason: "test"}
+	if err := store.CreatePendingApproval(ctx, session.ID, "req_1", payload); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.DeleteTerminalSession(ctx, session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetSession(ctx, session.ID); err != ErrNotFound {
+		t.Fatalf("GetSession after delete = %v, want ErrNotFound", err)
+	}
+	events, err := store.Replay(ctx, session.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected deleted events, got %d", len(events))
+	}
+	if err := store.ResolveApproval(ctx, session.ID, "req_1", "approve"); err != ErrNotFound {
+		t.Fatalf("ResolveApproval after delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteTerminalSessionRejectsActiveSession(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake", Status: "running"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteTerminalSession(ctx, session.ID); err != ErrNotTerminal {
+		t.Fatalf("DeleteTerminalSession = %v, want ErrNotTerminal", err)
+	}
+	if _, err := store.GetSession(ctx, session.ID); err != nil {
+		t.Fatalf("active session should remain after rejected delete: %v", err)
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))

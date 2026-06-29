@@ -130,16 +130,23 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 		return ErrNotOwned
 	}
 
-	m.mu.Lock()
-	delete(m.live, id)
-	m.mu.Unlock()
-
-	if err := runGit(ctx, "-C", rec.repoPath, "worktree", "remove", "--force", rec.wt.Path); err != nil {
+	if _, err := os.Stat(rec.wt.Path); err == nil {
+		if err := runGit(ctx, "-C", rec.repoPath, "worktree", "remove", "--force", rec.wt.Path); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := runGit(ctx, "-C", rec.repoPath, "worktree", "prune"); err != nil {
 		return err
 	}
 	if rec.wt.Branch != "" {
 		_ = runGit(ctx, "-C", rec.repoPath, "branch", "-D", rec.wt.Branch)
 	}
+
+	m.mu.Lock()
+	delete(m.live, id)
+	m.mu.Unlock()
 	return nil
 }
 

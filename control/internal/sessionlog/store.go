@@ -19,6 +19,8 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+var ErrNotTerminal = errors.New("session is not terminal")
+
 type Store struct {
 	db *sql.DB
 	mu sync.Mutex
@@ -313,6 +315,49 @@ func (s *Store) SetSessionStatus(ctx context.Context, sessionID, status string) 
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) DeleteTerminalSession(ctx context.Context, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var status string
+	if err = tx.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id = ?`, sessionID).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = ErrNotFound
+		}
+		return err
+	}
+	if !isTerminalStatus(status) {
+		err = ErrNotTerminal
+		return err
+	}
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM pending_approvals WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM events WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, sessionID); err != nil {
+		return err
+	}
+	err = tx.Commit()
+	return err
+}
+
+func isTerminalStatus(status string) bool {
+	return status == "done" || status == "error" || status == "cancelled"
 }
 
 func (s *Store) AppendEvent(ctx context.Context, sessionID, eventType string, payload any) (protocol.Event, error) {

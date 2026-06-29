@@ -145,6 +145,10 @@ type actionEventsOutput struct {
 	Body   protocol.ActionEventsResponse
 }
 
+type deleteSessionOutput struct {
+	Status int `status:"204"`
+}
+
 func (s *Server) registerHumaRoutes(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listHosts",
@@ -244,6 +248,21 @@ func (s *Server) registerHumaRoutes(api huma.API) {
 		DefaultStatus: http.StatusAccepted,
 		Errors:        []int{http.StatusBadGateway, http.StatusServiceUnavailable},
 	}, s.cancelSessionHuma)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "deleteSession",
+		Method:        http.MethodDelete,
+		Path:          "/sessions/{host_id}/{local_id}",
+		Summary:       "Delete a terminal session",
+		Tags:          []string{"sessions"},
+		DefaultStatus: http.StatusNoContent,
+		Errors: []int{
+			http.StatusNotFound,
+			http.StatusConflict,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+		},
+	}, s.deleteSessionHuma)
 }
 
 func (s *Server) listHostsHuma(_ context.Context, _ *struct{}) (*listHostsOutput, error) {
@@ -422,6 +441,23 @@ func (s *Server) cancelSessionHuma(ctx context.Context, input *sessionPathInput)
 	return s.postAction(ctx, input.HostID, input.LocalID, "cancel", map[string]string{})
 }
 
+func (s *Server) deleteSessionHuma(ctx context.Context, input *sessionPathInput) (*deleteSessionOutput, error) {
+	host, ok := s.onlineHost(input.HostID)
+	if !ok {
+		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+
+	target := strings.TrimRight(host.URL, "/") + "/sessions/" + input.LocalID
+	status, raw, err := s.deleteRaw(ctx, target)
+	if err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	if status >= 300 {
+		return nil, newResponseError(status, raw)
+	}
+	return &deleteSessionOutput{Status: status}, nil
+}
+
 func (s *Server) postAction(ctx context.Context, hostID, localID, suffix string, body any) (*actionEventsOutput, error) {
 	host, ok := s.onlineHost(hostID)
 	if !ok {
@@ -453,6 +489,23 @@ func (s *Server) postJSONRaw(ctx context.Context, target string, body any) (int,
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, respBody, nil
+}
+
+func (s *Server) deleteRaw(ctx context.Context, target string) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
+	if err != nil {
+		return 0, nil, err
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, nil, err

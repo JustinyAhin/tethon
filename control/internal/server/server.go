@@ -388,6 +388,10 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := parts[0]
 
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		s.handleDelete(w, r, sessionID)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "stream" && r.Method == http.MethodGet {
 		s.handleStream(w, r, sessionID)
 		return
@@ -406,6 +410,77 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeError(w, http.StatusNotFound, "not found")
+}
+
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, sessionID string) {
+	session, err := s.store.GetSession(r.Context(), sessionID)
+	if err != nil {
+		s.logger.Warn("session_delete_rejected", "session_id", sessionID, "reason", err.Error())
+		writeStoreError(w, err)
+		return
+	}
+	if !isTerminalStatus(session.Status) {
+		s.logger.Warn("session_delete_rejected", "session_id", sessionID, "status", session.Status, "reason", "session is not terminal")
+		writeError(w, http.StatusConflict, "session must be terminal before deletion")
+		return
+	}
+	if err := s.removeSessionWorktree(r.Context(), session); err != nil {
+		s.logger.Warn("session_delete_rejected", "session_id", sessionID, "reason", err.Error())
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.store.DeleteTerminalSession(r.Context(), sessionID); err != nil {
+		s.logger.Warn("session_delete_rejected", "session_id", sessionID, "reason", err.Error())
+		if errors.Is(err, sessionlog.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if errors.Is(err, sessionlog.ErrNotTerminal) {
+			writeError(w, http.StatusConflict, "session must be terminal before deletion")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.logger.Info("session_deleted", "session_id", sessionID, "status", session.Status)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) removeSessionWorktree(ctx context.Context, session protocol.Session) error {
+	if s.worktrees == nil || session.WorktreePath == "" {
+		return nil
+	}
+	if _, ok := s.worktrees.Get(session.ID); !ok {
+		if s.repos == nil || session.RepoID == "" {
+			if _, err := os.Stat(session.WorktreePath); os.IsNotExist(err) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			return fmt.Errorf("session worktree is not tracked")
+		}
+		rp, ok := s.repos.Get(session.RepoID)
+		if !ok {
+			return fmt.Errorf("repo %q is not registered for session worktree cleanup", session.RepoID)
+		}
+		if err := s.worktrees.Adopt(worktree.Worktree{
+			ID:      session.ID,
+			RepoID:  session.RepoID,
+			Path:    session.WorktreePath,
+			Branch:  session.Branch,
+			BaseRef: session.BaseRef,
+		}, rp.Path); err != nil {
+			return err
+		}
+	}
+	if err := s.worktrees.Remove(ctx, session.ID); err != nil && !errors.Is(err, worktree.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+func isTerminalStatus(status string) bool {
+	return status == "done" || status == "error" || status == "cancelled"
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, sessionID string) {

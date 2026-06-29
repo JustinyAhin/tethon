@@ -325,6 +325,43 @@ func TestHubProxiesCancellation(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventDone})
 }
 
+func TestHubProxiesSessionDeletion(t *testing.T) {
+	hubTS, hostTS := newHubAndHost(t, time.Second)
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
+		HostID: "mac",
+		Name:   "Mac",
+		URL:    hostTS.URL,
+		Agents: []string{"fake"},
+	})
+
+	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/input", protocol.InputRequest{Text: "done"})
+
+	assertStatus(t, http.MethodDelete, hubTS.URL+"/sessions/"+session.ID, "", http.StatusNoContent)
+
+	var resp protocol.ListSessionsResponse
+	getJSON(t, hubTS.URL+"/sessions", &resp)
+	for _, summary := range resp.Sessions {
+		if summary.ID == session.ID {
+			t.Fatalf("deleted session still listed: %+v", summary)
+		}
+	}
+}
+
+func TestHubDeletePropagatesHostConflict(t *testing.T) {
+	hubTS, hostTS := newHubAndHost(t, time.Second)
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
+		HostID: "mac",
+		Name:   "Mac",
+		URL:    hostTS.URL,
+		Agents: []string{"fake"},
+	})
+
+	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+
+	assertStatus(t, http.MethodDelete, hubTS.URL+"/sessions/"+session.ID, "", http.StatusConflict)
+}
+
 func TestHubRejectsOfflineHost(t *testing.T) {
 	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
 	hub := New(time.Second)

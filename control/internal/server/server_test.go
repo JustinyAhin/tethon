@@ -175,6 +175,47 @@ func TestCancelSessionEmitsDoneAndDeactivatesSession(t *testing.T) {
 	}
 }
 
+func TestDeleteTerminalSessionRemovesSessionState(t *testing.T) {
+	ts := newTestServer(t)
+
+	session := postSession(t, ts.URL)
+	postJSON(t, ts.URL+"/sessions/"+session.ID+"/input", protocol.InputRequest{Text: "done"})
+
+	if status := deleteStatus(t, ts.URL+"/sessions/"+session.ID); status != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", status)
+	}
+
+	var resp protocol.ListSessionsResponse
+	getJSON(t, ts.URL+"/sessions", &resp)
+	for _, summary := range resp.Sessions {
+		if summary.ID == session.ID {
+			t.Fatalf("deleted session still listed: %+v", summary)
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/sessions/"+session.ID+"/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer streamResp.Body.Close()
+	if streamResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected stream 404 after delete, got %s", streamResp.Status)
+	}
+}
+
+func TestDeleteRejectsActiveSession(t *testing.T) {
+	ts := newTestServer(t)
+
+	session := postSession(t, ts.URL)
+	if status := deleteStatus(t, ts.URL+"/sessions/"+session.ID); status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", status)
+	}
+}
+
 func TestServerLogsSessionLifecycleWithoutInputBody(t *testing.T) {
 	var logs bytes.Buffer
 	ts := newTestServerWithConfig(t, Config{
@@ -457,6 +498,20 @@ func postJSONStatus(t *testing.T, url string, value any) int {
 		t.Fatal(err)
 	}
 	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+func deleteStatus(t *testing.T, url string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import {
 	HubAPIError,
 	cancelSession as cancelHubSession,
 	createSession as createHubSession,
+	deleteSession as deleteHubSession,
 	listSessions,
 	resolveApproval as resolveHubApproval,
 	sendInput as sendHubInput,
@@ -134,4 +135,18 @@ const cancelSession = command(CancelSessionSchema, async ({ id }): Promise<SendR
 	}
 });
 
-export { getSessions, createSession, sendInput, resolveApproval, cancelSession };
+const DeleteSessionSchema = v.object({
+	id: v.pipe(v.string(), v.nonEmpty())
+});
+
+const deleteSession = command(DeleteSessionSchema, async ({ id }): Promise<SendResult> => {
+	try {
+		await deleteHubSession({ baseUrl: hubBase(), id });
+		return { ok: true };
+	} catch (err) {
+		if (err instanceof HubAPIError) return { ok: false, error: err.message };
+		throw err;
+	}
+});
+
+export { getSessions, createSession, sendInput, resolveApproval, cancelSession, deleteSession };

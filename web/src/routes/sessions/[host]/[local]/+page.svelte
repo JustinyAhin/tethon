@@ -2,8 +2,14 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { PersistedState } from 'runed';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { sendInput, resolveApproval, cancelSession } from '$lib/remote-functions/sessions.remote';
+	import {
+		sendInput,
+		resolveApproval,
+		cancelSession,
+		deleteSession
+	} from '$lib/remote-functions/sessions.remote';
 	import type {
 		SessionEvent,
 		SessionStartedPayload,
@@ -26,7 +32,7 @@
 	const seen = new SvelteSet<number>(events.map((e) => e.seq));
 
 	let connected = $state(false);
-	let done = $state(events.some((e) => e.type === 'done'));
+	let done = $state(events.some((e) => e.type === 'done' || e.type === 'error'));
 	let streamError = $state('');
 	let logEl = $state<HTMLElement>();
 	let replyOpen = $state<Record<string, boolean>>({});
@@ -96,7 +102,7 @@
 					seen.add(ev.seq);
 					events.push(ev);
 					added = true;
-					if (ev.type === 'done') done = true;
+					if (ev.type === 'done' || ev.type === 'error') done = true;
 				}
 				// Persist outside any reactive effect to avoid a self-invalidating
 				// update loop (writing PersistedState inside $effect re-triggers it).
@@ -140,6 +146,7 @@
 	let text = $state('');
 	let sendError = $state('');
 	let cancelError = $state('');
+	let deleteError = $state('');
 
 	const cancel = async () => {
 		if (done || cancelSession.pending > 0) return;
@@ -148,6 +155,19 @@
 			cancelError = '';
 		} else {
 			cancelError = res.error;
+		}
+	};
+
+	const deleteCurrentSession = async () => {
+		if (!done || deleteSession.pending > 0) return;
+		if (!window.confirm('Permanently delete this session? This cannot be undone.')) return;
+		const res = await deleteSession({ id });
+		if (res.ok) {
+			deleteError = '';
+			persisted.disconnect();
+			await goto('/sessions', { invalidateAll: true });
+		} else {
+			deleteError = res.error;
 		}
 	};
 
@@ -234,12 +254,27 @@
 					{cancelSession.pending > 0 ? 'Stopping…' : 'Stop'}
 				</button>
 			{/if}
+			{#if done}
+				<button
+					onclick={deleteCurrentSession}
+					disabled={deleteSession.pending > 0}
+					class="rounded border border-red-300 px-3 py-1 text-xs font-medium text-red-700 disabled:opacity-50"
+				>
+					{deleteSession.pending > 0 ? 'Deleting…' : 'Delete'}
+				</button>
+			{/if}
 		</div>
 	</div>
 
 	{#if cancelError}
 		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
 			{cancelError}
+		</p>
+	{/if}
+
+	{#if deleteError}
+		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+			{deleteError}
 		</p>
 	{/if}
 

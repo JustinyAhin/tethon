@@ -122,6 +122,71 @@ func TestErrorRetainsWorktree(t *testing.T) {
 	}
 }
 
+func TestDeleteErrorSessionRemovesRetainedWorktree(t *testing.T) {
+	registry, repos := fixtureRepo(t)
+	mgr := worktree.NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	ts := newTestServerWithConfig(t, Config{
+		Agents:    agent.NewRegistry(agent.NewClaude(agent.ClaudeConfig{Binary: "claude", Runner: claudeRunnerResult(true)})),
+		Repos:     registry,
+		Worktrees: mgr,
+	})
+
+	var session protocol.CreateSessionResponse
+	postJSONInto(t, ts.URL+"/sessions", protocol.CreateSessionRequest{RepoID: repos[0].ID, Agent: "claude-cli", Prompt: "hi"}, &session)
+	events := streamEvents(t, ts.URL, session.ID, 0, 2)
+	if events[len(events)-1].Type != protocol.EventError {
+		t.Fatalf("expected terminal error event, got %q", events[len(events)-1].Type)
+	}
+
+	wt, ok := mgr.Get(session.ID)
+	if !ok {
+		t.Fatal("failed session worktree should be retained before delete")
+	}
+	if status := deleteStatus(t, ts.URL+"/sessions/"+session.ID); status != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", status)
+	}
+	if _, ok := mgr.Get(session.ID); ok {
+		t.Fatal("worktree should be untracked after delete")
+	}
+	if _, err := os.Stat(wt.Path); !os.IsNotExist(err) {
+		t.Fatalf("worktree dir should be removed after delete: %v", err)
+	}
+	if gitBranchExists(t, repos[0].Path, wt.Branch) {
+		t.Fatalf("worktree branch %q should be deleted", wt.Branch)
+	}
+}
+
+func TestDeleteErrorSessionToleratesMissingWorktreeDir(t *testing.T) {
+	registry, repos := fixtureRepo(t)
+	mgr := worktree.NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	ts := newTestServerWithConfig(t, Config{
+		Agents:    agent.NewRegistry(agent.NewClaude(agent.ClaudeConfig{Binary: "claude", Runner: claudeRunnerResult(true)})),
+		Repos:     registry,
+		Worktrees: mgr,
+	})
+
+	var session protocol.CreateSessionResponse
+	postJSONInto(t, ts.URL+"/sessions", protocol.CreateSessionRequest{RepoID: repos[0].ID, Agent: "claude-cli", Prompt: "hi"}, &session)
+	events := streamEvents(t, ts.URL, session.ID, 0, 2)
+	if events[len(events)-1].Type != protocol.EventError {
+		t.Fatalf("expected terminal error event, got %q", events[len(events)-1].Type)
+	}
+
+	wt, ok := mgr.Get(session.ID)
+	if !ok {
+		t.Fatal("failed session worktree should be retained before delete")
+	}
+	if err := os.RemoveAll(wt.Path); err != nil {
+		t.Fatal(err)
+	}
+	if status := deleteStatus(t, ts.URL+"/sessions/"+session.ID); status != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", status)
+	}
+	if gitBranchExists(t, repos[0].Path, wt.Branch) {
+		t.Fatalf("worktree branch %q should be deleted", wt.Branch)
+	}
+}
+
 // TestRecoverInterruptsAndAdopts covers zqe.5 restart recovery: a session left
 // running is marked errored and its worktree re-adopted, without deletion.
 func TestRecoverInterruptsAndAdopts(t *testing.T) {
@@ -247,4 +312,10 @@ func gitRepo(t *testing.T) string {
 		}
 	}
 	return dir
+}
+
+func gitBranchExists(t *testing.T, repoPath, branch string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return cmd.Run() == nil
 }

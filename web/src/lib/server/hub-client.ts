@@ -127,6 +127,19 @@ const cancelSession = async ({ baseUrl, id }: { baseUrl: string; id: string }) =
 	);
 };
 
+const deleteSession = async ({ baseUrl, id }: { baseUrl: string; id: string }) => {
+	const path = sessionPath(id);
+	const result = await createHubClient(baseUrl).DELETE('/sessions/{host_id}/{local_id}', {
+		params: { path }
+	});
+	if (result.error) {
+		throw new HubAPIError({
+			status: result.response.status,
+			message: errorMessage({ error: result.error, status: result.response.status })
+		});
+	}
+};
+
 // Open the hub SSE stream and return the raw upstream Response so callers can
 // pass the body through verbatim. Consuming the body in JS to re-emit it (the
 // old streamSessionEvents generator) fails on Cloudflare Workers with
@@ -166,6 +179,7 @@ export {
 	HubAPIError,
 	cancelSession,
 	createSession,
+	deleteSession,
 	listHosts,
 	listSessions,
 	openSessionStream,
