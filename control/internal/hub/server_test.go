@@ -156,7 +156,10 @@ func TestHubProxiesApprovalResolution(t *testing.T) {
 	})
 
 	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
-	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/approvals/approval_bootstrap", protocol.ResolveApprovalRequest{Action: "approve"})
+	startupEvents := streamEvents(t, hubTS.URL, session.ID, 0, 3)
+	requestID := approvalRequestID(t, startupEvents[2])
+
+	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/approvals/"+requestID, protocol.ResolveApprovalRequest{Action: "approve"})
 	events := streamEvents(t, hubTS.URL, session.ID, 3, 2)
 
 	assertSeqs(t, events, []int64{4, 5})
@@ -357,6 +360,21 @@ func assertTypes(t *testing.T, events []protocol.Event, want []string) {
 			t.Fatalf("event %d type = %s, want %s", i, events[i].Type, want[i])
 		}
 	}
+}
+
+func approvalRequestID(t *testing.T, event protocol.Event) string {
+	t.Helper()
+	if event.Type != protocol.EventAwaitingApproval {
+		t.Fatalf("event type = %s, want %s", event.Type, protocol.EventAwaitingApproval)
+	}
+	var payload protocol.ApprovalPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.RequestID == "" {
+		t.Fatal("approval request_id is empty")
+	}
+	return payload.RequestID
 }
 
 func strconvInt(value int64) string {

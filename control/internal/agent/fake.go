@@ -30,7 +30,7 @@ func (fakeAdapter) Capabilities() Capabilities {
 func (fakeAdapter) Start(ctx context.Context, req StartRequest, sink Sink) (RunningSession, error) {
 	running := &fakeSession{sink: sink}
 	approval := protocol.ApprovalPayload{
-		RequestID: "approval_bootstrap",
+		RequestID: "approval_bootstrap_" + req.Session.ID,
 		Command:   "fake risky command",
 		Reason:    "proves pending approval state and replay",
 	}
