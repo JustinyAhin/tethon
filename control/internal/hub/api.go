@@ -149,6 +149,15 @@ type deleteSessionOutput struct {
 	Status int `status:"204"`
 }
 
+type repoRefsInput struct {
+	HostID string `path:"host_id"`
+	RepoID string `path:"repo_id"`
+}
+
+type repoRefsOutput struct {
+	Body protocol.RepoRefsResponse
+}
+
 func (s *Server) registerHumaRoutes(api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listHosts",
@@ -263,6 +272,15 @@ func (s *Server) registerHumaRoutes(api huma.API) {
 			http.StatusServiceUnavailable,
 		},
 	}, s.deleteSessionHuma)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "listRepoRefs",
+		Method:      http.MethodGet,
+		Path:        "/repos/{host_id}/{repo_id}/refs",
+		Summary:     "List a repo's branches and tags",
+		Tags:        []string{"repos"},
+		Errors:      []int{http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.listRepoRefsHuma)
 }
 
 func (s *Server) listHostsHuma(_ context.Context, _ *struct{}) (*listHostsOutput, error) {
@@ -458,6 +476,27 @@ func (s *Server) deleteSessionHuma(ctx context.Context, input *sessionPathInput)
 	return &deleteSessionOutput{Status: status}, nil
 }
 
+func (s *Server) listRepoRefsHuma(ctx context.Context, input *repoRefsInput) (*repoRefsOutput, error) {
+	host, ok := s.onlineHost(input.HostID)
+	if !ok {
+		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+
+	target := strings.TrimRight(host.URL, "/") + "/repos/" + input.RepoID + "/refs"
+	status, body, err := s.getRaw(ctx, target)
+	if err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	if status >= 300 {
+		return nil, newResponseError(status, body)
+	}
+	var refs protocol.RepoRefsResponse
+	if err := json.Unmarshal(body, &refs); err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	return &repoRefsOutput{Body: refs}, nil
+}
+
 func (s *Server) postAction(ctx context.Context, hostID, localID, suffix string, body any) (*actionEventsOutput, error) {
 	host, ok := s.onlineHost(hostID)
 	if !ok {
@@ -489,6 +528,23 @@ func (s *Server) postJSONRaw(ctx context.Context, target string, body any) (int,
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, respBody, nil
+}
+
+func (s *Server) getRaw(ctx context.Context, target string) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return 0, nil, err
+	}
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return 0, nil, err

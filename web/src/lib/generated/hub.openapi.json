@@ -220,6 +220,25 @@
 				"required": ["id", "name", "path"],
 				"type": "object"
 			},
+			"RepoRefsResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"branches": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					},
+					"tags": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": ["branches", "tags"],
+				"type": "object"
+			},
 			"ResolveApprovalRequest": {
 				"additionalProperties": false,
 				"properties": {
@@ -468,6 +487,93 @@
 				},
 				"summary": "Refresh a host heartbeat",
 				"tags": ["hosts"]
+			}
+		},
+		"/repos/{host_id}/{repo_id}/refs": {
+			"get": {
+				"operationId": "listRepoRefs",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "repo_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RepoRefsResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "List a repo's branches and tags",
+				"tags": ["repos"]
 			}
 		},
 		"/sessions": {
