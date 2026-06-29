@@ -6,6 +6,7 @@ import {
 	EventInputReceived,
 	EventOutput,
 	EventSessionStarted,
+	EventToolResult,
 	EventUsage
 } from '$lib/generated/protocol';
 import type {
@@ -21,6 +22,7 @@ import type {
 	RepoInfo,
 	SessionStartedPayload,
 	SessionSummary as ProtocolSessionSummary,
+	ToolResultPayload,
 	UsagePayload
 } from '$lib/generated/protocol';
 
@@ -30,6 +32,7 @@ type SessionEventType =
 	| typeof EventInputReceived
 	| typeof EventAwaitingApproval
 	| typeof EventApprovalResolved
+	| typeof EventToolResult
 	| typeof EventUsage
 	| typeof EventDone
 	| typeof EventError;
@@ -50,6 +53,7 @@ export {
 	EventInputReceived,
 	EventOutput,
 	EventSessionStarted,
+	EventToolResult,
 	EventUsage
 };
 export type {
@@ -64,6 +68,7 @@ export type {
 	InputReceivedPayload,
 	ApprovalPayload,
 	ApprovalResolvedPayload,
+	ToolResultPayload,
 	UsagePayload,
 	DonePayload,
 	ErrorPayload

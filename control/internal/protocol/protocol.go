@@ -10,6 +10,7 @@ const (
 	EventOutput           = "output"
 	EventAwaitingApproval = "awaiting_approval"
 	EventApprovalResolved = "approval_resolved"
+	EventToolResult       = "tool_result"
 	EventInputReceived    = "input_received"
 	EventUsage            = "usage"
 	EventDone             = "done"
@@ -156,6 +157,22 @@ type ApprovalResolvedPayload struct {
 	RequestID string `json:"request_id"`
 	Action    string `json:"action"`
 	Text      string `json:"text,omitempty"`
+}
+
+type ToolResultPayload struct {
+	Agent             string          `json:"agent"`
+	ToolName          string          `json:"tool_name"`
+	ToolInput         json.RawMessage `json:"tool_input,omitempty"`
+	ToolUseID         string          `json:"tool_use_id,omitempty"`
+	ApprovalRequestID string          `json:"approval_request_id,omitempty"`
+	Status            string          `json:"status"`
+	DurationMS        *int64          `json:"duration_ms,omitempty"`
+	Response          json.RawMessage `json:"response,omitempty"`
+	Error             string          `json:"error,omitempty"`
+	IsInterrupt       bool            `json:"is_interrupt,omitempty"`
+	Redacted          bool            `json:"redacted,omitempty"`
+	Truncated         bool            `json:"truncated,omitempty"`
+	MaxBytes          int             `json:"max_bytes,omitempty"`
 }
 
 type InputReceivedPayload struct {

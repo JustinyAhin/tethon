@@ -7,6 +7,7 @@ export const EventSessionStarted = 'session_started';
 export const EventOutput = 'output';
 export const EventAwaitingApproval = 'awaiting_approval';
 export const EventApprovalResolved = 'approval_resolved';
+export const EventToolResult = 'tool_result';
 export const EventInputReceived = 'input_received';
 export const EventUsage = 'usage';
 export const EventDone = 'done';
@@ -137,6 +138,21 @@ export interface ApprovalResolvedPayload {
 	request_id: string;
 	action: string;
 	text?: string;
+}
+export interface ToolResultPayload {
+	agent: string;
+	tool_name: string;
+	tool_input?: unknown;
+	tool_use_id?: string;
+	approval_request_id?: string;
+	status: string;
+	duration_ms?: number /* int64 */;
+	response?: unknown;
+	error?: string;
+	is_interrupt?: boolean;
+	redacted?: boolean;
+	truncated?: boolean;
+	max_bytes?: number /* int */;
 }
 export interface InputReceivedPayload {
 	text: string;

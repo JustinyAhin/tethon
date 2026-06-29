@@ -18,6 +18,7 @@
 		InputReceivedPayload,
 		ApprovalPayload,
 		ApprovalResolvedPayload,
+		ToolResultPayload,
 		UsagePayload,
 		DonePayload,
 		ErrorPayload
@@ -228,6 +229,20 @@
 			case 'approval_resolved': {
 				const p = event.payload as ApprovalResolvedPayload;
 				return `## Approval resolved\n\n- request_id: ${p.request_id}\n- action: ${p.action}${p.text ? `\n\n${p.text}` : ''}`;
+			}
+			case 'tool_result': {
+				const p = event.payload as ToolResultPayload;
+				const lines = [`## Tool result`, `- tool: ${p.tool_name}`, `- status: ${p.status}`];
+				if (p.tool_use_id) lines.push(`- tool_use_id: ${p.tool_use_id}`);
+				if (p.approval_request_id) lines.push(`- approval_request_id: ${p.approval_request_id}`);
+				if (p.duration_ms != null) lines.push(`- duration_ms: ${p.duration_ms}`);
+				if (p.redacted) lines.push(`- redacted: true`);
+				if (p.truncated) lines.push(`- truncated: true`, `- max_bytes: ${p.max_bytes ?? ''}`);
+				if (p.tool_input)
+					lines.push('', 'Tool input:', '```json', formatPayload(p.tool_input), '```');
+				if (p.response) lines.push('', 'Response:', '```json', formatPayload(p.response), '```');
+				if (p.error) lines.push('', 'Error:', p.error);
+				return lines.join('\n');
 			}
 			case 'usage': {
 				const p = event.payload as UsagePayload;
@@ -518,6 +533,63 @@
 			{:else if event.type === 'approval_resolved'}
 				{@const p = event.payload as ApprovalResolvedPayload}
 				<p class="text-xs text-gray-500">approval {p.action}{p.text ? `: ${p.text}` : ''}</p>
+			{:else if event.type === 'tool_result'}
+				{@const p = event.payload as ToolResultPayload}
+				<div
+					class="rounded-lg border p-3 text-sm {p.status === 'success'
+						? 'border-emerald-200 bg-emerald-50'
+						: 'border-red-200 bg-red-50'}"
+				>
+					<div class="flex flex-wrap items-start justify-between gap-2">
+						<div>
+							<p
+								class={p.status === 'success'
+									? 'font-medium text-emerald-800'
+									: 'font-medium text-red-800'}
+							>
+								Tool result
+							</p>
+							<p class={p.status === 'success' ? 'text-emerald-700' : 'text-red-700'}>
+								{p.tool_name || 'tool'}{p.tool_use_id ? ` · ${p.tool_use_id}` : ''}
+							</p>
+						</div>
+						<span
+							class="rounded-full px-2 py-0.5 text-xs font-medium {p.status === 'success'
+								? 'bg-emerald-100 text-emerald-700'
+								: 'bg-red-100 text-red-700'}"
+						>
+							{p.status}
+						</span>
+					</div>
+					<p
+						class={p.status === 'success'
+							? 'mt-1 text-xs text-emerald-700'
+							: 'mt-1 text-xs text-red-700'}
+					>
+						{p.duration_ms != null ? `${p.duration_ms} ms` : ''}
+						{p.approval_request_id
+							? `${p.duration_ms != null ? ' · ' : ''}approval ${p.approval_request_id}`
+							: ''}
+						{p.redacted ? ' · redacted' : ''}{p.truncated ? ' · truncated' : ''}
+					</p>
+					{#if p.tool_input}
+						<pre class="mt-2 overflow-x-auto rounded bg-white/70 p-2 text-xs">{JSON.stringify(
+								p.tool_input,
+								null,
+								2
+							)}</pre>
+					{/if}
+					{#if p.response}
+						<pre class="mt-2 overflow-x-auto rounded bg-white/70 p-2 text-xs">{JSON.stringify(
+								p.response,
+								null,
+								2
+							)}</pre>
+					{/if}
+					{#if p.error}
+						<p class="mt-2 whitespace-pre-wrap text-xs text-red-700">{p.error}</p>
+					{/if}
+				</div>
 			{:else if event.type === 'usage'}
 				{@const p = event.payload as UsagePayload}
 				<p class="text-xs text-gray-400">

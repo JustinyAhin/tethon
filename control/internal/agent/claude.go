@@ -368,8 +368,21 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt string, hook claud
 		return err
 	}
 
-	settings, err := s.hookSettings(hook)
+	hookLog, err := os.CreateTemp("", "tethon-claude-hooks-*.jsonl")
 	if err != nil {
+		s.finishTurn()
+		return err
+	}
+	hookLogPath := hookLog.Name()
+	if err := hookLog.Close(); err != nil {
+		_ = os.Remove(hookLogPath)
+		s.finishTurn()
+		return err
+	}
+
+	settings, err := s.hookSettings(hook, hookLogPath)
+	if err != nil {
+		_ = os.Remove(hookLogPath)
 		s.finishTurn()
 		return err
 	}
@@ -390,6 +403,7 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt string, hook claud
 		Env:    s.adapter.extraEnv,
 	})
 	if err != nil {
+		_ = os.Remove(hookLogPath)
 		s.finishTurn()
 		s.adapter.logger.Error("agent_process_start_failed", "agent", "claude-cli", "session_id", s.sessionID, "cwd", s.workDir, "error", err.Error())
 		return err
@@ -401,38 +415,47 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt string, hook claud
 	s.turnDone = done
 	s.mu.Unlock()
 
-	go s.runTurn(runCtx, process, approvalID, done)
+	go s.runTurn(runCtx, process, approvalID, hookLogPath, done)
 	return nil
 }
 
-func (s *claudeSession) hookSettings(hook claudeHookDecision) (string, error) {
+func (s *claudeSession) hookSettings(hook claudeHookDecision, hookLogPath string) (string, error) {
 	if s.adapter.hookHelperBinary == "" {
 		return "", errors.New("claude hook helper binary is required")
 	}
 	if hook.Mode == "" {
 		hook.Mode = claudeHookModeDefer
 	}
-	command := strings.Join([]string{
+	commandParts := []string{
 		"env",
 		"TETHON_CLAUDE_HOOK_MODE=" + shellQuote(hook.Mode),
 		"TETHON_CLAUDE_HOOK_REQUEST_ID=" + shellQuote(hook.RequestID),
 		"TETHON_CLAUDE_HOOK_TEXT=" + shellQuote(hook.Text),
+	}
+	if hookLogPath != "" {
+		commandParts = append(commandParts, claudeHookLogEnv+"="+shellQuote(hookLogPath))
+	}
+	commandParts = append(commandParts,
 		shellQuote(s.adapter.hookHelperBinary),
 		"claude-hook",
-	}, " ")
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"PreToolUse": []any{
-				map[string]any{
-					"matcher": ".*",
-					"hooks": []any{
-						map[string]string{
-							"type":    "command",
-							"command": command,
-						},
-					},
+	)
+	command := strings.Join(commandParts, " ")
+	hookConfig := []any{
+		map[string]any{
+			"matcher": ".*",
+			"hooks": []any{
+				map[string]string{
+					"type":    "command",
+					"command": command,
 				},
 			},
+		},
+	}
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse":         hookConfig,
+			"PostToolUse":        hookConfig,
+			"PostToolUseFailure": hookConfig,
 		},
 	}
 	raw, err := json.Marshal(settings)
@@ -451,8 +474,11 @@ func (s *claudeSession) finishTurn() {
 	s.mu.Unlock()
 }
 
-func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, approvalID string, done chan struct{}) {
+func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, approvalID, hookLogPath string, done chan struct{}) {
 	defer func() {
+		if hookLogPath != "" {
+			_ = os.Remove(hookLogPath)
+		}
 		s.finishTurn()
 		close(done)
 	}()
@@ -473,6 +499,11 @@ func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, app
 	}
 	waitErr := process.Wait()
 	<-stderrDone
+	if hookLogPath != "" {
+		if err := s.consumeHookLog(ctx, hookLogPath); err != nil {
+			s.adapter.logger.Warn("agent_hook_log_error", "agent", "claude-cli", "session_id", s.sessionID, "error", err.Error())
+		}
+	}
 	if waitErr != nil && !s.isCancellingOrTerminal() {
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
@@ -489,6 +520,140 @@ func (s *claudeSession) runTurn(ctx context.Context, process CommandProcess, app
 		delete(s.pending, approvalID)
 		s.mu.Unlock()
 	}
+}
+
+const toolResultMaxBytes = 64 * 1024
+
+func (s *claudeSession) consumeHookLog(ctx context.Context, path string) error {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open claude hook log: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var result claudeHookToolResult
+		if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
+			return fmt.Errorf("parse claude hook log: %w", err)
+		}
+		payload := toolResultPayload(result)
+		if payload.ToolName == "" || payload.Status == "" {
+			continue
+		}
+		if _, err := s.sink.AppendEvent(ctx, protocol.EventToolResult, payload); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read claude hook log: %w", err)
+	}
+	return nil
+}
+
+func toolResultPayload(result claudeHookToolResult) protocol.ToolResultPayload {
+	toolInput, inputRedacted, inputTruncated := sanitizeRawJSON(result.ToolInput, toolResultMaxBytes)
+	response, responseRedacted, responseTruncated := sanitizeRawJSON(result.Response, toolResultMaxBytes)
+	errText, errorTruncated := truncateString(result.Error, toolResultMaxBytes)
+	truncated := result.Truncated || inputTruncated || responseTruncated || errorTruncated
+	payload := protocol.ToolResultPayload{
+		Agent:             result.Agent,
+		ToolName:          result.ToolName,
+		ToolInput:         toolInput,
+		ToolUseID:         result.ToolUseID,
+		ApprovalRequestID: result.ApprovalRequestID,
+		Status:            result.Status,
+		DurationMS:        result.DurationMS,
+		Response:          response,
+		Error:             errText,
+		IsInterrupt:       result.IsInterrupt,
+		Redacted:          result.Redacted || inputRedacted || responseRedacted,
+		Truncated:         truncated,
+	}
+	if payload.Agent == "" {
+		payload.Agent = "claude-cli"
+	}
+	if truncated {
+		payload.MaxBytes = result.MaxBytes
+		if payload.MaxBytes == 0 {
+			payload.MaxBytes = toolResultMaxBytes
+		}
+	}
+	return payload
+}
+
+func sanitizeRawJSON(raw json.RawMessage, maxBytes int) (json.RawMessage, bool, bool) {
+	if len(raw) == 0 {
+		return nil, false, false
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		encoded, truncated := truncateJSONBytes(raw, maxBytes)
+		return encoded, false, truncated
+	}
+	redacted := redactJSONValue(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		encoded, _ = json.Marshal("[unserializable tool payload]")
+	}
+	bounded, truncated := truncateJSONBytes(encoded, maxBytes)
+	return bounded, redacted, truncated
+}
+
+func redactJSONValue(value any) bool {
+	redacted := false
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if isSensitiveJSONKey(key) {
+				typed[key] = "[redacted]"
+				redacted = true
+				continue
+			}
+			if redactJSONValue(child) {
+				redacted = true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if redactJSONValue(child) {
+				redacted = true
+			}
+		}
+	}
+	return redacted
+}
+
+func isSensitiveJSONKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	for _, marker := range []string{"api_key", "apikey", "authorization", "cookie", "password", "secret", "token"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func truncateJSONBytes(raw []byte, maxBytes int) (json.RawMessage, bool) {
+	if maxBytes <= 0 || len(raw) <= maxBytes {
+		return json.RawMessage(raw), false
+	}
+	encoded, err := json.Marshal(string(raw[:maxBytes]))
+	if err != nil {
+		return json.RawMessage(`"[truncated]"`), true
+	}
+	return json.RawMessage(encoded), true
+}
+
+func truncateString(value string, maxBytes int) (string, bool) {
+	if maxBytes <= 0 || len(value) <= maxBytes {
+		return value, false
+	}
+	return value[:maxBytes], true
 }
 
 func (s *claudeSession) isCancellingOrTerminal() bool {

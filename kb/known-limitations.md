@@ -43,14 +43,20 @@ the target design in `kb/agent-control-design.md`.
 - `caffeinate` while sessions are active is still planned.
 - macOS install/run is documented and scripted, but secret storage is an env
   file, not Keychain.
+- Session isolation via per-session git worktrees remains the default. A
+  direct-repo mode may be useful for local single-session workflows, but it
+  should be added only as an explicit workspace mode with clear warnings about
+  modifying the main checkout.
 
 ## Agent Events
 
 - The Claude adapter currently surfaces `rate_limit_event` as user-visible
   `output` text. Beads tracks this as `tethon-4kl`; the likely fix is to drop
   routine events or introduce a dedicated notice/rate-limit event type.
-- `diff_available` and richer tool-use events are target protocol ideas, not
-  current emitted events.
+- Claude approved tool executions emit first-class `tool_result` events with
+  bounded/redacted input and result payloads. `diff_available` and broader
+  non-Claude tool-use event coverage are target protocol ideas, not current
+  emitted events.
 
 ## Web Deployment
 

@@ -543,6 +543,104 @@ func TestRunClaudeHookDecisions(t *testing.T) {
 	}
 }
 
+func TestRunClaudeHookToolResultsAppendToLog(t *testing.T) {
+	path := t.TempDir() + "/hooks.jsonl"
+	duration := int64(42)
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "success",
+			input: `{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"tool_1","duration_ms":42,"tool_input":{"command":"echo GONE","api_key":"secret"},"tool_response":{"stdout":"GONE\n","stderr":"","interrupted":false}}`,
+		},
+		{
+			name:  "failure",
+			input: `{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_use_id":"tool_2","duration_ms":42,"tool_input":{"command":"missing"},"error":"exit status 1","is_interrupt":true}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := RunClaudeHook(strings.NewReader(tc.input), &out, func(key string) string {
+				switch key {
+				case claudeHookLogEnv:
+					return path
+				case "TETHON_CLAUDE_HOOK_REQUEST_ID":
+					return "approval_1"
+				default:
+					return ""
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("post hook wrote stdout %q, want empty", out.String())
+			}
+		})
+	}
+
+	sink := newMemorySink()
+	session := &claudeSession{sink: sink}
+	if err := session.consumeHookLog(context.Background(), path); err != nil {
+		t.Fatal(err)
+	}
+
+	success := sink.waitForType(t, protocol.EventToolResult)
+	var payload protocol.ToolResultPayload
+	decodePayload(t, success, &payload)
+	if payload.ToolName != "Bash" || payload.ToolUseID != "tool_1" || payload.ApprovalRequestID != "approval_1" || payload.Status != "success" {
+		t.Fatalf("success payload = %+v", payload)
+	}
+	if payload.DurationMS == nil || *payload.DurationMS != duration {
+		t.Fatalf("duration = %v, want %d", payload.DurationMS, duration)
+	}
+	if !payload.Redacted || !strings.Contains(string(payload.ToolInput), "[redacted]") {
+		t.Fatalf("tool input was not redacted: %s", payload.ToolInput)
+	}
+	if !strings.Contains(string(payload.Response), "GONE") {
+		t.Fatalf("response = %s, want GONE", payload.Response)
+	}
+
+	var failure protocol.ToolResultPayload
+	sink.mu.Lock()
+	for _, event := range sink.events {
+		if event.Type != protocol.EventToolResult {
+			continue
+		}
+		var candidate protocol.ToolResultPayload
+		if err := json.Unmarshal(event.Payload, &candidate); err != nil {
+			t.Fatal(err)
+		}
+		if candidate.Status == "failure" {
+			failure = candidate
+			break
+		}
+	}
+	sink.mu.Unlock()
+	if failure.ToolUseID != "tool_2" || failure.Error != "exit status 1" || !failure.IsInterrupt {
+		t.Fatalf("failure payload = %+v", failure)
+	}
+}
+
+func TestToolResultPayloadTruncatesLargeResponses(t *testing.T) {
+	result := claudeHookToolResult{
+		Agent:    "claude-cli",
+		ToolName: "Bash",
+		Status:   "success",
+		Response: json.RawMessage(`"` + strings.Repeat("x", toolResultMaxBytes*2) + `"`),
+	}
+
+	payload := toolResultPayload(result)
+	if !payload.Truncated || payload.MaxBytes != toolResultMaxBytes {
+		t.Fatalf("truncation metadata = truncated %v max %d", payload.Truncated, payload.MaxBytes)
+	}
+	if len(payload.Response) >= len(result.Response) {
+		t.Fatalf("response was not bounded: %d bytes, original %d", len(payload.Response), len(result.Response))
+	}
+}
+
 type fakeCommandRunner struct {
 	mu      sync.Mutex
 	outputs []string

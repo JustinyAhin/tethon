@@ -3,7 +3,9 @@ package sessionlog
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"tethon/internal/protocol"
@@ -81,6 +83,45 @@ func TestReplayPersistsAcrossReopen(t *testing.T) {
 	}
 	if events[0].Seq != 1 || events[0].Type != protocol.EventOutput {
 		t.Fatalf("unexpected event after reopen: %+v", events[0])
+	}
+}
+
+func TestReplayPersistsToolResultEvent(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "claude-cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	duration := int64(25)
+	payload := protocol.ToolResultPayload{
+		Agent:             "claude-cli",
+		ToolName:          "Bash",
+		ToolInput:         json.RawMessage(`{"command":"test -e AGENTS.md || echo GONE"}`),
+		ToolUseID:         "tool_1",
+		ApprovalRequestID: "tool_1",
+		Status:            "success",
+		DurationMS:        &duration,
+		Response:          json.RawMessage(`{"stdout":"GONE\n","stderr":"","exit_code":0}`),
+	}
+	if _, err := store.AppendEvent(ctx, session.ID, protocol.EventToolResult, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := store.Replay(ctx, session.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != protocol.EventToolResult {
+		t.Fatalf("events = %+v, want one tool_result", events)
+	}
+	var got protocol.ToolResultPayload
+	if err := json.Unmarshal(events[0].Payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ToolName != "Bash" || got.Status != "success" || !strings.Contains(string(got.Response), "GONE") {
+		t.Fatalf("tool result payload = %+v", got)
 	}
 }
 

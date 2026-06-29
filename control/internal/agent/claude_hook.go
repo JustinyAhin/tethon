@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -14,11 +15,17 @@ const (
 	claudeHookModeReply   = "reply"
 )
 
+const claudeHookLogEnv = "TETHON_CLAUDE_HOOK_LOG"
+
 type claudeHookInput struct {
 	HookEventName string          `json:"hook_event_name"`
 	ToolName      string          `json:"tool_name"`
 	ToolInput     json.RawMessage `json:"tool_input"`
 	ToolUseID     string          `json:"tool_use_id"`
+	ToolResponse  json.RawMessage `json:"tool_response"`
+	Error         string          `json:"error"`
+	IsInterrupt   bool            `json:"is_interrupt"`
+	DurationMS    *int64          `json:"duration_ms"`
 }
 
 type claudeHookOutput struct {
@@ -32,6 +39,23 @@ type claudeHookSpecificOutput struct {
 	UpdatedInput             json.RawMessage `json:"updatedInput,omitempty"`
 }
 
+type claudeHookToolResult struct {
+	HookEventName     string          `json:"hook_event_name"`
+	Agent             string          `json:"agent"`
+	ToolName          string          `json:"tool_name"`
+	ToolInput         json.RawMessage `json:"tool_input,omitempty"`
+	ToolUseID         string          `json:"tool_use_id,omitempty"`
+	ApprovalRequestID string          `json:"approval_request_id,omitempty"`
+	Status            string          `json:"status"`
+	DurationMS        *int64          `json:"duration_ms,omitempty"`
+	Response          json.RawMessage `json:"response,omitempty"`
+	Error             string          `json:"error,omitempty"`
+	IsInterrupt       bool            `json:"is_interrupt,omitempty"`
+	Redacted          bool            `json:"redacted,omitempty"`
+	Truncated         bool            `json:"truncated,omitempty"`
+	MaxBytes          int             `json:"max_bytes,omitempty"`
+}
+
 func RunClaudeHook(in io.Reader, out io.Writer, getenv func(string) string) error {
 	var input claudeHookInput
 	if err := json.NewDecoder(in).Decode(&input); err != nil {
@@ -40,6 +64,34 @@ func RunClaudeHook(in io.Reader, out io.Writer, getenv func(string) string) erro
 	mode := getenv("TETHON_CLAUDE_HOOK_MODE")
 	requestID := getenv("TETHON_CLAUDE_HOOK_REQUEST_ID")
 	text := getenv("TETHON_CLAUDE_HOOK_TEXT")
+
+	switch input.HookEventName {
+	case "PostToolUse":
+		return appendClaudeHookToolResult(getenv(claudeHookLogEnv), claudeHookToolResult{
+			HookEventName:     input.HookEventName,
+			Agent:             "claude-cli",
+			ToolName:          input.ToolName,
+			ToolInput:         input.ToolInput,
+			ToolUseID:         input.ToolUseID,
+			ApprovalRequestID: requestID,
+			Status:            "success",
+			DurationMS:        input.DurationMS,
+			Response:          input.ToolResponse,
+		})
+	case "PostToolUseFailure":
+		return appendClaudeHookToolResult(getenv(claudeHookLogEnv), claudeHookToolResult{
+			HookEventName:     input.HookEventName,
+			Agent:             "claude-cli",
+			ToolName:          input.ToolName,
+			ToolInput:         input.ToolInput,
+			ToolUseID:         input.ToolUseID,
+			ApprovalRequestID: requestID,
+			Status:            "failure",
+			DurationMS:        input.DurationMS,
+			Error:             input.Error,
+			IsInterrupt:       input.IsInterrupt,
+		})
+	}
 
 	decision := claudeHookSpecificOutput{
 		HookEventName:      "PreToolUse",
@@ -69,6 +121,38 @@ func RunClaudeHook(in io.Reader, out io.Writer, getenv func(string) string) erro
 		decision.PermissionDecision = "defer"
 	}
 	return json.NewEncoder(out).Encode(claudeHookOutput{HookSpecificOutput: decision})
+}
+
+func appendClaudeHookToolResult(path string, result claudeHookToolResult) error {
+	if path == "" {
+		return nil
+	}
+	if len(result.ToolInput) == 0 {
+		result.ToolInput = json.RawMessage(`{}`)
+	}
+	toolInput, inputRedacted, inputTruncated := sanitizeRawJSON(result.ToolInput, toolResultMaxBytes)
+	response, responseRedacted, responseTruncated := sanitizeRawJSON(result.Response, toolResultMaxBytes)
+	errText, errorTruncated := truncateString(result.Error, toolResultMaxBytes)
+	result.ToolInput = toolInput
+	result.Response = response
+	result.Error = errText
+	result.Redacted = result.Redacted || inputRedacted || responseRedacted
+	result.Truncated = result.Truncated || inputTruncated || responseTruncated || errorTruncated
+	if result.Truncated {
+		result.MaxBytes = toolResultMaxBytes
+	}
+	if len(result.Response) == 0 {
+		result.Response = nil
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("open claude hook log: %w", err)
+	}
+	defer file.Close()
+	if err := json.NewEncoder(file).Encode(result); err != nil {
+		return fmt.Errorf("write claude hook log: %w", err)
+	}
+	return nil
 }
 
 func shellQuote(value string) string {
