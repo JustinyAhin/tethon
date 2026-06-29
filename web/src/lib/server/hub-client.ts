@@ -1,7 +1,7 @@
 import { HUB_AUTH_TOKEN } from '$app/env/private';
 import createClient from 'openapi-fetch';
 import type { paths, components } from '$lib/generated/hub-openapi';
-import type { HostSummary, SessionEvent, SessionSummary } from '$lib/types';
+import type { HostSummary, SessionSummary } from '$lib/types';
 
 type HubErrorBody = components['schemas']['HubStatusError'];
 type CreateSessionRequest = components['schemas']['CreateSessionRequest'];
@@ -127,20 +127,11 @@ const cancelSession = async ({ baseUrl, id }: { baseUrl: string; id: string }) =
 	);
 };
 
-const parseFrame = (frame: string): SessionEvent | null => {
-	for (const line of frame.split('\n')) {
-		if (line.startsWith('data:')) {
-			try {
-				return JSON.parse(line.slice(5).trimStart()) as SessionEvent;
-			} catch {
-				return null;
-			}
-		}
-	}
-	return null;
-};
-
-const streamSessionEvents = async function* ({
+// Open the hub SSE stream and return the raw upstream Response so callers can
+// pass the body through verbatim. Consuming the body in JS to re-emit it (the
+// old streamSessionEvents generator) fails on Cloudflare Workers with
+// "Network connection lost"; a verbatim pass-through is the supported pattern.
+const openSessionStream = async ({
 	baseUrl,
 	id,
 	from = 0,
@@ -150,7 +141,7 @@ const streamSessionEvents = async function* ({
 	id: string;
 	from?: number;
 	signal?: AbortSignal;
-}): AsyncGenerator<SessionEvent> {
+}): Promise<Response> => {
 	const path = sessionPath(id);
 	const params = new URLSearchParams({ from: String(from) });
 	const url = `${baseUrl.replace(/\/$/, '')}/sessions/${path.host_id}/${path.local_id}/stream?${params}`;
@@ -168,22 +159,7 @@ const streamSessionEvents = async function* ({
 		}
 		throw new HubAPIError({ status: res.status, message });
 	}
-
-	const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-	let buffer = '';
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buffer += value;
-		let sep: number;
-		while ((sep = buffer.indexOf('\n\n')) !== -1) {
-			const event = parseFrame(buffer.slice(0, sep));
-			buffer = buffer.slice(sep + 2);
-			if (!event) continue;
-			yield event;
-			if (event.type === 'done') return;
-		}
-	}
+	return res;
 };
 
 export {
@@ -192,8 +168,8 @@ export {
 	createSession,
 	listHosts,
 	listSessions,
+	openSessionStream,
 	resolveApproval,
-	sendInput,
-	streamSessionEvents
+	sendInput
 };
 export type { CreateSessionRequest };

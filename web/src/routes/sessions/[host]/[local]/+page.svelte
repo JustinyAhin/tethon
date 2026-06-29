@@ -3,12 +3,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { PersistedState } from 'runed';
 	import { page } from '$app/state';
-	import {
-		streamSession,
-		sendInput,
-		resolveApproval,
-		cancelSession
-	} from '$lib/remote-functions/sessions.remote';
+	import { sendInput, resolveApproval, cancelSession } from '$lib/remote-functions/sessions.remote';
 	import type {
 		SessionEvent,
 		SessionStartedPayload,
@@ -24,16 +19,19 @@
 	type ApprovalAction = 'approve' | 'deny' | 'reply';
 
 	const id = `${page.params.host}/${page.params.local}`;
+	const streamUrl = `/sessions/${page.params.host}/${page.params.local}/stream`;
 	const persisted = new PersistedState<SessionEvent[]>(`tethon:events:${id}`, []);
 
 	let events = $state<SessionEvent[]>(persisted.current);
 	const seen = new SvelteSet<number>(events.map((e) => e.seq));
-	const fromCursor = events.reduce((max, e) => Math.max(max, e.seq), 0);
-	const stream = streamSession({ id, from: fromCursor });
 
 	$effect(() => {
 		persisted.current = [...events];
 	});
+
+	let connected = $state(false);
+	let done = $state(events.some((e) => e.type === 'done'));
+	let streamError = $state('');
 	let logEl = $state<HTMLElement>();
 	let replyOpen = $state<Record<string, boolean>>({});
 	let replyText = $state<Record<string, string>>({});
@@ -41,7 +39,7 @@
 	let approvalSubmitting = $state<Record<string, boolean>>({});
 
 	const status = $derived(
-		stream.error ? 'error' : stream.done ? 'finished' : stream.connected ? 'live' : 'connecting…'
+		streamError ? 'error' : done ? 'finished' : connected ? 'live' : 'connecting…'
 	);
 	const resolvedApprovals = $derived.by(() => {
 		const resolved: Record<string, ApprovalResolvedPayload> = {};
@@ -53,22 +51,84 @@
 		return resolved;
 	});
 
-	onMount(() => {
-		let cancelled = false;
-		(async () => {
-			try {
-				for await (const ev of stream) {
-					if (cancelled) break;
-					if (seen.has(ev.seq)) continue;
+	const parseEvent = (frame: string): SessionEvent | null => {
+		for (const line of frame.split('\n')) {
+			if (line.startsWith('data:')) {
+				try {
+					return JSON.parse(line.slice(5).trimStart()) as SessionEvent;
+				} catch {
+					return null;
+				}
+			}
+		}
+		return null;
+	};
+
+	// Stream the SSE relay (same-origin +server.ts) from the last seen cursor.
+	// Reading the body in the browser is fine; only the Worker can't re-emit it.
+	let controller: AbortController | null = null;
+
+	const consume = async () => {
+		if (done) return;
+		controller?.abort();
+		const ac = new AbortController();
+		controller = ac;
+		streamError = '';
+		const from = events.reduce((max, e) => Math.max(max, e.seq), 0);
+		try {
+			const res = await fetch(`${streamUrl}?from=${from}`, {
+				headers: { accept: 'text/event-stream' },
+				signal: ac.signal
+			});
+			if (!res.ok || !res.body) {
+				streamError = `Stream error ${res.status}`;
+				return;
+			}
+			connected = true;
+			const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+			let buffer = '';
+			for (;;) {
+				const { done: chunkDone, value } = await reader.read();
+				if (chunkDone) break;
+				buffer += value;
+				let sep: number;
+				while ((sep = buffer.indexOf('\n\n')) !== -1) {
+					const ev = parseEvent(buffer.slice(0, sep));
+					buffer = buffer.slice(sep + 2);
+					if (!ev || seen.has(ev.seq)) continue;
 					seen.add(ev.seq);
 					events.push(ev);
+					if (ev.type === 'done') done = true;
 				}
-			} catch {
-				// surfaced via stream.error
+			}
+		} catch (err) {
+			if (ac.signal.aborted) return;
+			streamError = err instanceof Error ? err.message : 'disconnected';
+		} finally {
+			if (controller === ac) {
+				connected = false;
+				controller = null;
+			}
+		}
+	};
+
+	const reconnect = () => {
+		void consume();
+	};
+
+	onMount(() => {
+		let stopped = false;
+		(async () => {
+			// Reconnect from cursor until the session is done or the page unmounts.
+			while (!stopped && !done) {
+				await consume();
+				if (stopped || done) break;
+				await new Promise((resolve) => setTimeout(resolve, 1000));
 			}
 		})();
 		return () => {
-			cancelled = true;
+			stopped = true;
+			controller?.abort();
 		};
 	});
 
@@ -81,7 +141,7 @@
 	let cancelError = $state('');
 
 	const cancel = async () => {
-		if (stream.done || cancelSession.pending > 0) return;
+		if (done || cancelSession.pending > 0) return;
 		const res = await cancelSession({ id });
 		if (res.ok) {
 			cancelError = '';
@@ -163,10 +223,8 @@
 			>
 				{status}
 			</span>
-			<button class="text-blue-600 hover:underline" onclick={() => stream.reconnect()}>
-				Reconnect
-			</button>
-			{#if !stream.done && !stream.error}
+			<button class="text-blue-600 hover:underline" onclick={reconnect}> Reconnect </button>
+			{#if !done && !streamError}
 				<button
 					onclick={cancel}
 					disabled={cancelSession.pending > 0}
@@ -184,9 +242,9 @@
 		</p>
 	{/if}
 
-	{#if stream.error}
+	{#if streamError}
 		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-			Stream error: {stream.error.message ?? 'disconnected'}
+			Stream error: {streamError}
 		</p>
 	{/if}
 
@@ -332,12 +390,12 @@
 			{/if}
 		{/each}
 
-		{#if events.length === 0 && !stream.error}
+		{#if events.length === 0 && !streamError}
 			<p class="text-sm text-gray-500">Waiting for events…</p>
 		{/if}
 	</div>
 
-	{#if stream.done}
+	{#if done}
 		<p class="mt-4 text-sm text-gray-500">Session finished.</p>
 	{:else}
 		<div class="mt-4">

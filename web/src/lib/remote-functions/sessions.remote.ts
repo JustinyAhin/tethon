@@ -1,5 +1,4 @@
 import { command, form, query } from '$app/server';
-import { error } from '@sveltejs/kit';
 import * as v from 'valibot';
 import type { SessionSummary } from '$lib/types';
 import {
@@ -9,7 +8,6 @@ import {
 	listSessions,
 	resolveApproval as resolveHubApproval,
 	sendInput as sendHubInput,
-	streamSessionEvents,
 	type CreateSessionRequest
 } from '$lib/server/hub-client';
 import { hubBase } from './hub';
@@ -77,31 +75,6 @@ const createSession = form(CreateSessionSchema, async (data): Promise<CreateResu
 	}
 });
 
-const StreamSessionSchema = v.object({
-	id: v.pipe(v.string(), v.nonEmpty()),
-	from: v.optional(v.number(), 0)
-});
-
-const streamSession = query.live(StreamSessionSchema, async function* ({ id, from }) {
-	const controller = new AbortController();
-	try {
-		for await (const event of streamSessionEvents({
-			baseUrl: hubBase(),
-			id,
-			from,
-			signal: controller.signal
-		})) {
-			yield event;
-			if (event.type === 'done') return;
-		}
-	} catch (err) {
-		if (err instanceof HubAPIError) error(err.status, err.message);
-		throw err;
-	} finally {
-		controller.abort();
-	}
-});
-
 const SendInputSchema = v.object({
 	id: v.pipe(v.string(), v.nonEmpty()),
 	text: v.pipe(v.string(), v.trim(), v.nonEmpty('Message is empty.'))
@@ -161,4 +134,4 @@ const cancelSession = command(CancelSessionSchema, async ({ id }): Promise<SendR
 	}
 });
 
-export { getSessions, createSession, streamSession, sendInput, resolveApproval, cancelSession };
+export { getSessions, createSession, sendInput, resolveApproval, cancelSession };
