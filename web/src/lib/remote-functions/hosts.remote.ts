@@ -1,15 +1,26 @@
 import { query } from '$app/server';
-import { error } from '@sveltejs/kit';
 import type { HostSummary } from '$lib/types';
 import { HubAPIError, listHosts } from '$lib/server/hub-client';
 import { hubBase } from './hub';
 
-const getHosts = query(async (): Promise<HostSummary[]> => {
+type HostsResult =
+	{ ok: true; hosts: HostSummary[] } | { ok: false; error: string; status: number };
+
+const loadError = (err: unknown): HostsResult => {
+	if (err instanceof HubAPIError) {
+		return { ok: false, error: err.message || `Hub error ${err.status}`, status: err.status };
+	}
+	if (err instanceof Error && err.message) {
+		return { ok: false, error: err.message, status: 0 };
+	}
+	return { ok: false, error: 'Could not load hosts.', status: 0 };
+};
+
+const getHosts = query(async (): Promise<HostsResult> => {
 	try {
-		return await listHosts({ baseUrl: hubBase() });
+		return { ok: true, hosts: await listHosts({ baseUrl: hubBase() }) };
 	} catch (err) {
-		if (err instanceof HubAPIError) error(err.status, err.message);
-		throw err;
+		return loadError(err);
 	}
 });
 

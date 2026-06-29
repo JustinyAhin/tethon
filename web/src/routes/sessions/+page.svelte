@@ -3,6 +3,10 @@
 	import SessionCard from '$lib/components/session-card.svelte';
 
 	const sessions = getSessions();
+	const sessionList = $derived(sessions.current?.ok ? sessions.current.sessions : undefined);
+	const sessionError = $derived(
+		sessions.error?.message ?? (sessions.current?.ok === false ? sessions.current.error : '')
+	);
 </script>
 
 <section>
@@ -11,17 +15,17 @@
 		<a href="/sessions/new" class="text-sm text-blue-600 hover:underline">New session</a>
 	</div>
 
-	{#if sessions.error}
+	{#if sessionError}
 		<p class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-			Could not load sessions: {sessions.error.message}
+			Could not load sessions: {sessionError}
 		</p>
 	{:else if sessions.loading && !sessions.ready}
 		<p class="text-sm text-gray-500">Loading…</p>
-	{:else if sessions.current && sessions.current.length === 0}
+	{:else if sessionList && sessionList.length === 0}
 		<p class="text-sm text-gray-500">No sessions yet.</p>
-	{:else if sessions.current}
+	{:else if sessionList}
 		<div class="grid gap-3 sm:grid-cols-2">
-			{#each sessions.current as session (session.id)}
+			{#each sessionList as session (session.id)}
 				<SessionCard {session} />
 			{/each}
 		</div>

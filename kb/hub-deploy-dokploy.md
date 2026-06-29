@@ -101,6 +101,17 @@ hub for now.
    tethon-hub -addr 0.0.0.0:39180
    ```
 
+   For runtime diagnostics, use the Dokploy service logs for the Compose
+   service. Useful hub log events:
+
+   - `hub_host_registered`: a host registered or refreshed its metadata. Check
+     `host_id`, `url`, `repo_count`, `agent_count`, and `online`.
+   - `hub_host_heartbeat`: a registered host heartbeat succeeded. Check
+     `host_id`, `url`, and `last_seen`.
+   - `hub_host_heartbeat_unknown`: a daemon sent a heartbeat for a host id the
+     in-memory hub registry does not know, usually after a hub restart; hostd
+     should re-register on the next loop.
+
 6. Smoke test.
 
    From your machine:
@@ -234,3 +245,8 @@ tethon-hostd \
 
 The daemon will register `http://<mac-tailscale-ip>:39181`, and the hub on the
 VPS can route to it.
+
+If hosts register but session listing or session creation returns `502`, check
+the Dokploy hub logs and confirm the VPS can call the registered `url` directly,
+for example over Tailscale. If `/hosts` returns `401`, the hub, web Worker,
+host daemon, or CLI are not using the same accepted bearer token.

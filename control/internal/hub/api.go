@@ -275,7 +275,9 @@ func (s *Server) registerHostHuma(_ context.Context, input *registerHostInput) (
 	s.hosts[req.HostID] = hostRecord{RegisterHostRequest: req, LastSeen: s.now().UTC()}
 	s.mu.Unlock()
 
-	return &hostOutput{Status: http.StatusCreated, Body: s.summary(req.HostID)}, nil
+	summary := s.summary(req.HostID)
+	s.logHostRegistered(summary)
+	return &hostOutput{Status: http.StatusCreated, Body: summary}, nil
 }
 
 func (s *Server) heartbeatHostHuma(_ context.Context, input *heartbeatInput) (*heartbeatOutput, error) {
@@ -287,9 +289,12 @@ func (s *Server) heartbeatHostHuma(_ context.Context, input *heartbeatInput) (*h
 	}
 	s.mu.Unlock()
 	if !ok {
+		s.logger.Warn("hub_host_heartbeat_unknown", "host_id", input.HostID)
 		return nil, huma.Error404NotFound("host not found")
 	}
-	return &heartbeatOutput{Body: s.summary(input.HostID)}, nil
+	summary := s.summary(input.HostID)
+	s.logHostHeartbeat(summary)
+	return &heartbeatOutput{Body: summary}, nil
 }
 
 func (s *Server) listSessionsHuma(ctx context.Context, _ *struct{}) (*listSessionsOutput, error) {

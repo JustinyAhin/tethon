@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -27,6 +28,7 @@ type Server struct {
 	now         func() time.Time
 	client      *http.Client
 	authTokens  [][sha256.Size]byte
+	logger      *slog.Logger
 }
 
 type hostRecord struct {
@@ -45,6 +47,7 @@ func New(hostTimeout time.Duration) *Server {
 		hostTimeout: hostTimeout,
 		now:         time.Now,
 		client:      &http.Client{},
+		logger:      slog.Default(),
 	}
 }
 
@@ -150,7 +153,9 @@ func (s *Server) handleRegisterHost(w http.ResponseWriter, r *http.Request) {
 	s.hosts[req.HostID] = hostRecord{RegisterHostRequest: req, LastSeen: s.now().UTC()}
 	s.mu.Unlock()
 
-	writeJSON(w, http.StatusCreated, s.summary(req.HostID))
+	summary := s.summary(req.HostID)
+	s.logHostRegistered(summary)
+	writeJSON(w, http.StatusCreated, summary)
 }
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, hostID string) {
@@ -162,10 +167,13 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, hostID 
 	}
 	s.mu.Unlock()
 	if !ok {
+		s.logger.Warn("hub_host_heartbeat_unknown", "host_id", hostID)
 		writeError(w, http.StatusNotFound, "host not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.summary(hostID))
+	summary := s.summary(hostID)
+	s.logHostHeartbeat(summary)
+	writeJSON(w, http.StatusOK, summary)
 }
 
 func (s *Server) handleListHosts(w http.ResponseWriter, _ *http.Request) {
@@ -427,6 +435,28 @@ func (s *Server) summary(hostID string) protocol.HostSummary {
 		LastSeen:  record.LastSeen,
 		Online:    s.isOnline(record),
 	}
+}
+
+func (s *Server) logHostRegistered(host protocol.HostSummary) {
+	s.logger.Info(
+		"hub_host_registered",
+		"host_id", host.HostID,
+		"name", host.Name,
+		"url", host.URL,
+		"repo_count", len(host.Repos),
+		"agent_count", len(host.Agents),
+		"online", host.Online,
+	)
+}
+
+func (s *Server) logHostHeartbeat(host protocol.HostSummary) {
+	s.logger.Info(
+		"hub_host_heartbeat",
+		"host_id", host.HostID,
+		"url", host.URL,
+		"last_seen", host.LastSeen,
+		"online", host.Online,
+	)
 }
 
 func (s *Server) isOnline(record hostRecord) bool {

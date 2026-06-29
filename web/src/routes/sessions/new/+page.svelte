@@ -17,7 +17,11 @@
 		}
 	);
 
-	const onlineHosts = $derived((hosts.current ?? []).filter((h) => h.online));
+	const hostList = $derived(hosts.current?.ok ? hosts.current.hosts : []);
+	const hostError = $derived(
+		hosts.error?.message ?? (hosts.current?.ok === false ? hosts.current.error : '')
+	);
+	const onlineHosts = $derived(hostList.filter((h) => h.online));
 	const selectedHost = $derived(onlineHosts.find((h) => h.host_id === selectedHostId));
 	const repos = $derived(selectedHost?.repos ?? []);
 	const agents = $derived(selectedHost?.agents ?? []);
@@ -26,6 +30,12 @@
 
 <section class="max-w-xl">
 	<h1 class="mb-4 text-xl font-semibold">Start a session</h1>
+
+	{#if hostError}
+		<p class="mb-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+			Could not load hosts: {hostError}
+		</p>
+	{/if}
 
 	<form {...createSession} class="space-y-4">
 		<label class="block">

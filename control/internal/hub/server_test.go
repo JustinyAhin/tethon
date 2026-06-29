@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -52,6 +53,74 @@ func TestHubRequiresBearerTokenWhenConfigured(t *testing.T) {
 	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "", http.StatusUnauthorized)
 	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "wrong", http.StatusUnauthorized)
 	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "secret", http.StatusOK)
+}
+
+func TestHubLogsHostRegistrationWithoutBearerToken(t *testing.T) {
+	var logs bytes.Buffer
+	hub := New(time.Second)
+	hub.SetAuthToken("secret-token")
+	hub.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	registerHostAuth(t, ts.URL, "secret-token", protocol.RegisterHostRequest{
+		HostID: "mac",
+		Name:   "Mac",
+		URL:    "http://100.64.0.10:39181",
+		Agents: []string{"fake", "claude-cli"},
+		Repos: []protocol.RepoInfo{
+			{ID: "one", Path: "/repos/one"},
+			{ID: "two", Path: "/repos/two"},
+		},
+	})
+
+	raw := logs.String()
+	for _, want := range []string{
+		`"msg":"hub_host_registered"`,
+		`"host_id":"mac"`,
+		`"name":"Mac"`,
+		`"url":"http://100.64.0.10:39181"`,
+		`"repo_count":2`,
+		`"agent_count":2`,
+		`"online":true`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("logs missing %q: %s", want, raw)
+		}
+	}
+	if strings.Contains(raw, "secret-token") || strings.Contains(raw, "Authorization") || strings.Contains(raw, "Bearer") {
+		t.Fatalf("logs contain bearer token: %s", raw)
+	}
+}
+
+func TestHubLogsHeartbeatStatus(t *testing.T) {
+	var logs bytes.Buffer
+	hub := New(time.Second)
+	hub.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	registerHost(t, ts.URL, protocol.RegisterHostRequest{
+		HostID: "mac",
+		Name:   "Mac",
+		URL:    "http://100.64.0.10:39181",
+	})
+	postJSON(t, ts.URL+"/hosts/mac/heartbeat", map[string]string{})
+	assertStatus(t, http.MethodPost, ts.URL+"/hosts/missing/heartbeat", "", http.StatusNotFound)
+
+	raw := logs.String()
+	for _, want := range []string{
+		`"msg":"hub_host_heartbeat"`,
+		`"host_id":"mac"`,
+		`"url":"http://100.64.0.10:39181"`,
+		`"online":true`,
+		`"msg":"hub_host_heartbeat_unknown"`,
+		`"host_id":"missing"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("logs missing %q: %s", want, raw)
+		}
+	}
 }
 
 func TestHubAcceptsAdditionalBearerTokens(t *testing.T) {

@@ -126,7 +126,7 @@ func run() error {
 			ExtraEnv:             cacheEnv(cRoot),
 		}))
 	}
-	log.Printf("hostd %s using db %s, worktree root %s, and shared cache root %s", *hostID, *dbPath, wtRoot, cRoot)
+	logger.Info("hostd_state_paths", "host_id", *hostID, "db", *dbPath, "worktree_root", wtRoot, "cache_root", cRoot)
 
 	hostURL := "http://" + *addr
 	registerReq := protocol.RegisterHostRequest{
@@ -138,7 +138,10 @@ func run() error {
 		Repos:     repoInfos(registry),
 	}
 	hub := newHubClient(*hubURL, *hubAuthToken, &http.Client{Timeout: *hubRequestTimeout})
-	go runHubConnectionLoop(ctx, hub, registerReq, hubConnectionConfig{})
+	go runHubConnectionLoop(ctx, hub, registerReq, hubConnectionConfig{
+		hubURL: *hubURL,
+		logger: logger,
+	})
 
 	hostServer := server.NewWithConfig(store, server.Config{
 		Agents:    agentRegistry,
@@ -148,11 +151,11 @@ func run() error {
 		Logger:    logger,
 	})
 	if err := hostServer.Recover(ctx); err != nil {
-		log.Printf("session recovery failed: %v", err)
+		logger.Error("session_recovery_failed", "error", err.Error())
 	}
 
 	srv := &http.Server{Addr: *addr, Handler: hostServer.Handler()}
-	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
+	logger.Info("hostd_serving", "host_id", *hostID, "advertised_url", hostURL, "hub_url", *hubURL)
 	return srv.ListenAndServe()
 }
 
@@ -226,7 +229,8 @@ type hubConnectionConfig struct {
 	minBackoff        time.Duration
 	maxBackoff        time.Duration
 	jitter            func(time.Duration) time.Duration
-	logf              func(string, ...any)
+	hubURL            string
+	logger            *slog.Logger
 }
 
 func (c hubConnectionConfig) withDefaults() hubConnectionConfig {
@@ -245,8 +249,8 @@ func (c hubConnectionConfig) withDefaults() hubConnectionConfig {
 	if c.jitter == nil {
 		c.jitter = defaultBackoffJitter
 	}
-	if c.logf == nil {
-		c.logf = log.Printf
+	if c.logger == nil {
+		c.logger = slog.Default()
 	}
 	return c
 }
@@ -254,6 +258,8 @@ func (c hubConnectionConfig) withDefaults() hubConnectionConfig {
 func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.RegisterHostRequest, cfg hubConnectionConfig) {
 	cfg = cfg.withDefaults()
 	registered := false
+	registrationFailures := 0
+	heartbeatFailures := 0
 	retryDelay := cfg.minBackoff
 	nextDelay := time.Duration(0)
 
@@ -273,7 +279,23 @@ func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.Registe
 
 		if err == nil {
 			if !registered {
-				cfg.logf("host registered with hub")
+				cfg.logger.Info(
+					"host_registered",
+					append(hubLogAttrs(cfg, req),
+						"failed_attempts", registrationFailures,
+						"next_heartbeat_delay", cfg.heartbeatInterval.String(),
+					)...,
+				)
+				registrationFailures = 0
+			} else if heartbeatFailures > 0 {
+				cfg.logger.Info(
+					"hub_heartbeat_recovered",
+					append(hubLogAttrs(cfg, req),
+						"failed_attempts", heartbeatFailures,
+						"next_heartbeat_delay", cfg.heartbeatInterval.String(),
+					)...,
+				)
+				heartbeatFailures = 0
 			}
 			registered = true
 			retryDelay = cfg.minBackoff
@@ -282,8 +304,9 @@ func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.Registe
 		}
 
 		if registered && isHTTPStatus(err, http.StatusNotFound) {
-			cfg.logf("hub forgot host %s; re-registering", req.HostID)
+			cfg.logger.Warn("hub_forgot_host", hubLogAttrs(cfg, req)...)
 			registered = false
+			heartbeatFailures = 0
 			retryDelay = cfg.minBackoff
 			nextDelay = 0
 			continue
@@ -291,12 +314,38 @@ func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.Registe
 
 		delay := retryDelay + cfg.jitter(retryDelay)
 		if registered {
-			cfg.logf("hub heartbeat failed: %v; retrying in %s", err, delay)
+			heartbeatFailures++
+			cfg.logger.Warn(
+				"hub_heartbeat_failed",
+				append(hubLogAttrs(cfg, req),
+					"error", err.Error(),
+					"failed_attempts", heartbeatFailures,
+					"next_retry_delay", delay.String(),
+				)...,
+			)
 		} else {
-			cfg.logf("host registration failed: %v; retrying in %s", err, delay)
+			registrationFailures++
+			cfg.logger.Warn(
+				"host_registration_failed",
+				append(hubLogAttrs(cfg, req),
+					"error", err.Error(),
+					"failed_attempts", registrationFailures,
+					"next_retry_delay", delay.String(),
+				)...,
+			)
 		}
 		nextDelay = delay
 		retryDelay = nextBackoff(retryDelay, cfg.maxBackoff)
+	}
+}
+
+func hubLogAttrs(cfg hubConnectionConfig, req protocol.RegisterHostRequest) []any {
+	return []any{
+		"hub_url", cfg.hubURL,
+		"host_id", req.HostID,
+		"advertised_url", req.URL,
+		"repo_count", len(req.Repos),
+		"agent_count", len(req.Agents),
 	}
 }
 

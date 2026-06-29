@@ -13,12 +13,24 @@ import {
 } from '$lib/server/hub-client';
 import { hubBase } from './hub';
 
-const getSessions = query(async (): Promise<SessionSummary[]> => {
+type SessionsResult =
+	{ ok: true; sessions: SessionSummary[] } | { ok: false; error: string; status: number };
+
+const loadError = (err: unknown): SessionsResult => {
+	if (err instanceof HubAPIError) {
+		return { ok: false, error: err.message || `Hub error ${err.status}`, status: err.status };
+	}
+	if (err instanceof Error && err.message) {
+		return { ok: false, error: err.message, status: 0 };
+	}
+	return { ok: false, error: 'Could not load sessions.', status: 0 };
+};
+
+const getSessions = query(async (): Promise<SessionsResult> => {
 	try {
-		return await listSessions({ baseUrl: hubBase() });
+		return { ok: true, sessions: await listSessions({ baseUrl: hubBase() }) };
 	} catch (err) {
-		if (err instanceof HubAPIError) error(err.status, err.message);
-		throw err;
+		return loadError(err);
 	}
 });
 

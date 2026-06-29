@@ -71,6 +71,25 @@ Follow logs:
 scripts/macos-hostd.sh logs
 ```
 
+This tails both LaunchAgent log files:
+
+```txt
+~/Library/Logs/Tethon/hostd.log
+~/Library/Logs/Tethon/hostd.err.log
+```
+
+Useful hostd log events:
+
+- `host_registered`: registration reached the hub. Check `hub_url`,
+  `host_id`, `advertised_url`, `repo_count`, and `agent_count`.
+- `host_registration_failed`: hostd could not register. Check `error` and
+  `next_retry_delay`.
+- `hub_heartbeat_failed`: hostd registered before, but heartbeat failed. Check
+  the hub URL, token, network route, and `next_retry_delay`.
+- `hub_heartbeat_recovered`: heartbeat recovered after one or more failures.
+- `hostd_serving`: confirms the advertised URL that the hub will call for
+  session operations.
+
 Restart after changing config or reinstalling:
 
 ```sh
@@ -104,6 +123,18 @@ The installed Mac should appear with `online: true`. If it does not, check:
 - the token in `~/.config/tethon/hostd.env`
 - that the hub can reach `http://<mac-tailscale-ip>:39181`
 - that the repo root exists and contains git repositories
+
+Common causes:
+
+- `401 Unauthorized` or repeated `host_registration_failed`: the host token does
+  not match the hub's accepted bearer token.
+- Host is missing from `/hosts`: the LaunchAgent is not running, the wrapper
+  cannot start `tethon-hostd`, or hostd cannot reach the hub.
+- Host appears but is offline: heartbeats stopped, the Mac slept, the network
+  changed, or the daemon restarted and is still retrying registration.
+- Host is online but session operations fail: the hub cannot reach the
+  `advertised_url` shown in hostd logs. For the current prototype, the VPS must
+  be able to call the Mac daemon directly.
 
 ## Paths
 

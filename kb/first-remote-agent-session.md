@@ -85,6 +85,10 @@ scripts/macos-hostd.sh status
 scripts/macos-hostd.sh logs
 ```
 
+Look for `host_registered` in the hostd logs. It should include the expected
+`hub_url`, `host_id`, `advertised_url`, and `repo_count`. If registration or
+heartbeat fails, the log line includes `error` and `next_retry_delay`.
+
 Current routing caveat: the hub calls the host daemon URL that the Mac
 registers. Until host-initiated persistent hub connections land, the VPS must be
 able to reach `http://<mac-tailscale-ip>:39181`.
@@ -214,10 +218,17 @@ Use `deny` or `reply <request-id> <text>` instead of `approve` when appropriate.
 
 - `401 Unauthorized`: the hub token does not match between hub, host, web, or
   CLI environment.
-- Host missing from `/hosts`: the LaunchAgent is not running, the token is
-  missing from `~/.config/tethon/hostd.env`, or the daemon cannot reach the hub.
+- Host missing from `/hosts`: check `scripts/macos-hostd.sh status` and
+  `scripts/macos-hostd.sh logs`. Common causes are a stopped LaunchAgent, a
+  missing token in `~/.config/tethon/hostd.env`, or hostd being unable to reach
+  the hub.
+- Host appears but is offline: heartbeats are not reaching the hub. Check
+  hostd logs for `hub_heartbeat_failed`, the retry delay, Mac sleep/network
+  state, and hub logs for `hub_host_heartbeat`.
 - Host online but sessions fail: the hub cannot reach
   `http://<mac-tailscale-ip>:39181`, or the repo path is not registered.
+- Host online but session list/start returns `502`: check Dokploy hub logs and
+  confirm the VPS can call the host's logged `advertised_url` directly.
 - `unknown agent`: `claude` was not available to `tethon-hostd` when it started.
 - `prompt is required for claude-cli sessions`: start real Claude sessions with
   a non-empty prompt.

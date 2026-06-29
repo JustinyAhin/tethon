@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -178,6 +180,108 @@ func TestHubConnectionLoopRetriesHeartbeatWithoutReregistering(t *testing.T) {
 	}
 }
 
+func TestHubConnectionLoopLogsRegistrationSuccessMetadataWithoutToken(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub := newFakeHub()
+	logs := newSafeBuffer()
+	req := protocol.RegisterHostRequest{
+		HostID: "mac",
+		URL:    "http://100.64.0.10:39181",
+		Agents: []string{"fake", "claude-cli"},
+		Repos: []protocol.RepoInfo{
+			{ID: "one", Path: "/repos/one"},
+			{ID: "two", Path: "/repos/two"},
+		},
+	}
+	cfg := testHubConnectionConfig()
+	cfg.hubURL = "https://hub.tethon.dev"
+	cfg.logger = slog.New(slog.NewJSONHandler(logs, nil))
+
+	go runHubConnectionLoop(ctx, hub, req, cfg)
+
+	if got := hub.waitCall(t); got != "register" {
+		t.Fatalf("first call = %q, want register", got)
+	}
+	raw := logs.waitFor(t, "host_registered")
+	for _, want := range []string{
+		`"msg":"host_registered"`,
+		`"hub_url":"https://hub.tethon.dev"`,
+		`"host_id":"mac"`,
+		`"advertised_url":"http://100.64.0.10:39181"`,
+		`"repo_count":2`,
+		`"agent_count":2`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("logs missing %q: %s", want, raw)
+		}
+	}
+	if strings.Contains(raw, "secret") || strings.Contains(raw, "Authorization") || strings.Contains(raw, "Bearer") {
+		t.Fatalf("logs contain secret-like value: %s", raw)
+	}
+}
+
+func TestHubConnectionLoopLogsHeartbeatFailureRetryDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub := newFakeHub()
+	hub.heartbeatErrs = []error{errors.New("network down")}
+	logs := newSafeBuffer()
+	cfg := testHubConnectionConfig()
+	cfg.hubURL = "https://hub.tethon.dev"
+	cfg.logger = slog.New(slog.NewJSONHandler(logs, nil))
+
+	go runHubConnectionLoop(ctx, hub, testRegisterRequest(), cfg)
+
+	for _, want := range []string{"register", "heartbeat"} {
+		if got := hub.waitCall(t); got != want {
+			t.Fatalf("call = %q, want %q", got, want)
+		}
+	}
+	raw := logs.waitFor(t, "hub_heartbeat_failed")
+	for _, want := range []string{
+		`"msg":"hub_heartbeat_failed"`,
+		`"host_id":"mac"`,
+		`"failed_attempts":1`,
+		`"next_retry_delay":"1ms"`,
+		`"error":"network down"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("logs missing %q: %s", want, raw)
+		}
+	}
+}
+
+func TestHubConnectionLoopLogsHeartbeatRecoveryAfterFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub := newFakeHub()
+	hub.heartbeatErrs = []error{errors.New("temporary network failure")}
+	logs := newSafeBuffer()
+	cfg := testHubConnectionConfig()
+	cfg.hubURL = "https://hub.tethon.dev"
+	cfg.logger = slog.New(slog.NewJSONHandler(logs, nil))
+
+	go runHubConnectionLoop(ctx, hub, testRegisterRequest(), cfg)
+
+	for _, want := range []string{"register", "heartbeat", "heartbeat"} {
+		if got := hub.waitCall(t); got != want {
+			t.Fatalf("call = %q, want %q", got, want)
+		}
+	}
+	raw := logs.waitFor(t, "hub_heartbeat_recovered")
+	for _, want := range []string{
+		`"msg":"hub_heartbeat_recovered"`,
+		`"host_id":"mac"`,
+		`"failed_attempts":1`,
+		`"next_heartbeat_delay":"1ms"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("logs missing %q: %s", want, raw)
+		}
+	}
+}
+
 func TestNextBackoffCapsAtMax(t *testing.T) {
 	if got := nextBackoff(time.Second, 5*time.Second); got != 2*time.Second {
 		t.Fatalf("nextBackoff = %s, want 2s", got)
@@ -259,6 +363,45 @@ func testHubConnectionConfig() hubConnectionConfig {
 		minBackoff:        time.Millisecond,
 		maxBackoff:        2 * time.Millisecond,
 		jitter:            func(time.Duration) time.Duration { return 0 },
-		logf:              func(string, ...any) {},
+		logger:            slog.New(slog.NewJSONHandler(newSafeBuffer(), nil)),
+	}
+}
+
+type safeBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func newSafeBuffer() *safeBuffer {
+	return &safeBuffer{}
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+func (b *safeBuffer) waitFor(t *testing.T, want string) string {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		raw := b.String()
+		if strings.Contains(raw, want) {
+			return raw
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for log %q; logs: %s", want, raw)
+		case <-tick.C:
+		}
 	}
 }
