@@ -1,0 +1,13 @@
+.git/
+.beads/
+.beads-backup/
+
+**/node_modules/
+**/.svelte-kit/
+**/.wrangler/
+**/dist/
+
+*.db
+*.log
+.env
+.env.*
