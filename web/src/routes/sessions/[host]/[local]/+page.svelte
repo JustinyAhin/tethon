@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
-	import { streamSession, sendInput } from '$lib/remote-functions/sessions.remote';
+	import { streamSession, sendInput, resolveApproval } from '$lib/remote-functions/sessions.remote';
 	import type {
 		SessionEvent,
 		SessionStartedPayload,
@@ -15,16 +15,31 @@
 		ErrorPayload
 	} from '$lib/types';
 
+	type ApprovalAction = 'approve' | 'deny' | 'reply';
+
 	const id = `${page.params.host}/${page.params.local}`;
 	const stream = streamSession(id);
 
 	let events = $state<SessionEvent[]>([]);
 	const seen = new SvelteSet<number>();
 	let logEl = $state<HTMLElement>();
+	let replyOpen = $state<Record<string, boolean>>({});
+	let replyText = $state<Record<string, string>>({});
+	let approvalError = $state<Record<string, string>>({});
+	let approvalSubmitting = $state<Record<string, boolean>>({});
 
 	const status = $derived(
 		stream.error ? 'error' : stream.done ? 'finished' : stream.connected ? 'live' : 'connecting…'
 	);
+	const resolvedApprovals = $derived.by(() => {
+		const resolved: Record<string, ApprovalResolvedPayload> = {};
+		for (const event of events) {
+			if (event.type !== 'approval_resolved') continue;
+			const payload = event.payload as ApprovalResolvedPayload;
+			resolved[payload.request_id] = payload;
+		}
+		return resolved;
+	});
 
 	onMount(() => {
 		let cancelled = false;
@@ -60,6 +75,44 @@
 			sendError = '';
 		} else {
 			sendError = res.error;
+		}
+	};
+
+	const submitApproval = async ({
+		requestID,
+		action
+	}: {
+		requestID: string;
+		action: ApprovalAction;
+	}) => {
+		if (
+			approvalSubmitting[requestID] ||
+			resolveApproval.pending > 0 ||
+			resolvedApprovals[requestID]
+		) {
+			return;
+		}
+		const text = replyText[requestID]?.trim() ?? '';
+		if (action === 'reply' && !text) {
+			approvalError[requestID] = 'Reply text is required.';
+			return;
+		}
+
+		approvalSubmitting[requestID] = true;
+		approvalError[requestID] = '';
+		const res = await resolveApproval({
+			id,
+			request_id: requestID,
+			action,
+			text
+		});
+		if (res.ok) {
+			replyOpen[requestID] = false;
+			replyText[requestID] = '';
+			approvalError[requestID] = '';
+		} else {
+			approvalSubmitting[requestID] = false;
+			approvalError[requestID] = res.error;
 		}
 	};
 
@@ -129,15 +182,91 @@
 				</div>
 			{:else if event.type === 'awaiting_approval'}
 				{@const p = event.payload as ApprovalPayload}
-				<div class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
-					<p class="font-medium text-amber-800">Awaiting approval</p>
-					<p class="text-amber-700">{p.command || p.tool_name || 'tool request'}</p>
+				{@const resolved = resolvedApprovals[p.request_id]}
+				{@const submitting = approvalSubmitting[p.request_id]}
+				<div
+					class="rounded-lg border p-3 text-sm {resolved
+						? 'border-gray-200 bg-gray-50'
+						: 'border-amber-300 bg-amber-50'}"
+				>
+					<div class="flex items-start justify-between gap-3">
+						<div>
+							<p class="font-medium {resolved ? 'text-gray-700' : 'text-amber-800'}">
+								{resolved ? 'Approval resolved' : 'Awaiting approval'}
+							</p>
+							<p class={resolved ? 'text-gray-600' : 'text-amber-700'}>
+								{p.command || p.tool_name || 'tool request'}
+							</p>
+						</div>
+						{#if resolved}
+							<span class="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600">
+								{resolved.action}
+							</span>
+						{/if}
+					</div>
+					{#if p.reason}
+						<p class="mt-2 text-xs {resolved ? 'text-gray-500' : 'text-amber-700'}">{p.reason}</p>
+					{/if}
+					{#if p.agent || p.tool_name}
+						<p class="mt-1 text-xs {resolved ? 'text-gray-400' : 'text-amber-600'}">
+							{p.agent ?? 'agent'}{p.tool_name ? ` · ${p.tool_name}` : ''}
+						</p>
+					{/if}
 					{#if p.tool_input}
-						<pre class="mt-1 overflow-x-auto rounded bg-amber-100/60 p-2 text-xs">{JSON.stringify(
-								p.tool_input,
-								null,
-								2
-							)}</pre>
+						<pre
+							class="mt-2 overflow-x-auto rounded p-2 text-xs {resolved
+								? 'bg-gray-100 text-gray-600'
+								: 'bg-amber-100/60'}">{JSON.stringify(p.tool_input, null, 2)}</pre>
+					{/if}
+					{#if resolved}
+						{#if resolved.text}
+							<p class="mt-2 whitespace-pre-wrap text-xs text-gray-500">{resolved.text}</p>
+						{/if}
+					{:else}
+						<div class="mt-3 flex flex-wrap gap-2">
+							<button
+								onclick={() => submitApproval({ requestID: p.request_id, action: 'approve' })}
+								disabled={submitting || resolveApproval.pending > 0}
+								class="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+							>
+								Approve
+							</button>
+							<button
+								onclick={() => submitApproval({ requestID: p.request_id, action: 'deny' })}
+								disabled={submitting || resolveApproval.pending > 0}
+								class="rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+							>
+								Deny
+							</button>
+							<button
+								onclick={() => (replyOpen[p.request_id] = !replyOpen[p.request_id])}
+								disabled={submitting || resolveApproval.pending > 0}
+								class="rounded border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 disabled:opacity-50"
+							>
+								Reply
+							</button>
+						</div>
+						{#if replyOpen[p.request_id]}
+							<div class="mt-3">
+								<textarea
+									bind:value={replyText[p.request_id]}
+									rows="2"
+									placeholder="Reply with instructions…"
+									class="w-full rounded border border-amber-300 bg-white p-2 text-sm"></textarea>
+								<button
+									onclick={() => submitApproval({ requestID: p.request_id, action: 'reply' })}
+									disabled={submitting ||
+										resolveApproval.pending > 0 ||
+										!replyText[p.request_id]?.trim()}
+									class="mt-2 rounded bg-amber-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+								>
+									{submitting || resolveApproval.pending > 0 ? 'Sending…' : 'Send reply'}
+								</button>
+							</div>
+						{/if}
+						{#if approvalError[p.request_id]}
+							<p class="mt-2 text-xs text-red-600">{approvalError[p.request_id]}</p>
+						{/if}
 					{/if}
 				</div>
 			{:else if event.type === 'approval_resolved'}

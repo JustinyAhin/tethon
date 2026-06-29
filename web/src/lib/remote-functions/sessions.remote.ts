@@ -115,4 +115,33 @@ const sendInput = command(SendInputSchema, async ({ id, text }): Promise<SendRes
 	return { ok: true };
 });
 
-export { getSessions, createSession, streamSession, sendInput };
+const ResolveApprovalSchema = v.pipe(
+	v.object({
+		id: v.pipe(v.string(), v.nonEmpty()),
+		request_id: v.pipe(v.string(), v.nonEmpty()),
+		action: v.picklist(['approve', 'deny', 'reply']),
+		text: optionalText
+	}),
+	v.forward(
+		v.check((d) => d.action !== 'reply' || Boolean(d.text), 'Reply text is required.'),
+		['text']
+	)
+);
+
+const resolveApproval = command(
+	ResolveApprovalSchema,
+	async ({ id, request_id, action, text }): Promise<SendResult> => {
+		const base = hubBase();
+		const body: { action: string; text?: string } = { action };
+		if (action === 'reply') body.text = text;
+		const res = await fetch(`${base}/sessions/${id}/approvals/${request_id}`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+		if (!res.ok) return { ok: false, error: await hubErrorMessage(res) };
+		return { ok: true };
+	}
+);
+
+export { getSessions, createSession, streamSession, sendInput, resolveApproval };
