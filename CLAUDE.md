@@ -52,6 +52,8 @@ This project uses `bd` (beads) for issue tracking (prefix `tethon`).
 
 **Never close bd issues unless explicitly asked.** Finishing the work doesn't mean the ticket is done — the user decides when to close.
 
+When a Beads command updates `.beads/interactions.jsonl` as part of the work being committed, include that file in the same commit. Do not sweep unrelated interaction entries into unrelated commits.
+
 ### Backup
 
 There is no Dolt remote, so back up beads through a git-tracked Dolt-native backup directory:
