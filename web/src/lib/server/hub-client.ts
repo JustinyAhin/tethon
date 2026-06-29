@@ -1,3 +1,4 @@
+import { HUB_AUTH_TOKEN } from '$app/env/private';
 import createClient from 'openapi-fetch';
 import type { paths, components } from '$lib/generated/hub-openapi';
 import type { HostSummary, SessionEvent, SessionSummary } from '$lib/types';
@@ -16,8 +17,14 @@ class HubAPIError extends Error {
 	}
 }
 
+const hubHeaders = (headers?: HeadersInit): Headers => {
+	const out = new Headers(headers);
+	if (HUB_AUTH_TOKEN) out.set('Authorization', `Bearer ${HUB_AUTH_TOKEN}`);
+	return out;
+};
+
 const createHubClient = (baseUrl: string) =>
-	createClient<paths>({ baseUrl: baseUrl.replace(/\/$/, '') });
+	createClient<paths>({ baseUrl: baseUrl.replace(/\/$/, ''), headers: hubHeaders() });
 
 const errorMessage = ({ error, status }: { error: unknown; status: number }): string => {
 	const body = error as Partial<HubErrorBody> | undefined;
@@ -149,7 +156,7 @@ const streamSessionEvents = async function* ({
 	const url = `${baseUrl.replace(/\/$/, '')}/sessions/${path.host_id}/${path.local_id}/stream?${params}`;
 	const res = await fetch(url, {
 		signal,
-		headers: { accept: 'text/event-stream' }
+		headers: hubHeaders({ accept: 'text/event-stream' })
 	});
 	if (!res.ok || !res.body) {
 		let message = `Hub error ${res.status}`;

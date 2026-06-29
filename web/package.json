@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "wrangler types --check && vite build",
+		"build": "wrangler types && vite build",
 		"preview": "wrangler dev .svelte-kit/cloudflare/_worker.js --port 4173",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "wrangler types --check && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -41,6 +41,7 @@
 		"wrangler": "^4.97.0"
 	},
 	"dependencies": {
+		"jose": "^6.2.3",
 		"openapi-fetch": "^0.17.0",
 		"runed": "^0.37.1",
 		"valibot": "^1.4.2"

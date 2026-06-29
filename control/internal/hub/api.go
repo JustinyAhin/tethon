@@ -65,6 +65,17 @@ func (s *Server) newHumaAPI() (*http.ServeMux, huma.API) {
 	config.SchemasPath = ""
 	config.DocsPath = "/docs"
 	config.OpenAPIPath = "/openapi"
+	if config.Components == nil {
+		config.Components = &huma.Components{}
+	}
+	config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"bearerAuth": {
+			Type:        "http",
+			Scheme:      "bearer",
+			Description: "Shared bearer token for deployed hub clients.",
+		},
+	}
+	config.Security = []map[string][]string{{"bearerAuth": []string{}}}
 
 	api := humago.New(mux, config)
 	s.registerHumaRoutes(api)

@@ -53,6 +53,7 @@ func run() error {
 
 	addr := flag.String("addr", "127.0.0.1:39181", "listen address")
 	hubURL := flag.String("hub-url", "http://127.0.0.1:39180", "hub URL")
+	hubAuthToken := flag.String("hub-auth-token", os.Getenv("TETHON_HUB_AUTH_TOKEN"), "bearer token for hub requests")
 	dbPath := flag.String("db", "./hostd.db", "sqlite database path")
 	hostID := flag.String("host-id", sanitizeHostID(hostname), "host id")
 	name := flag.String("name", hostname, "host display name")
@@ -119,10 +120,10 @@ func run() error {
 		RepoRoots: registry.Paths(),
 		Repos:     repoInfos(registry),
 	}
-	if err := registerHost(*hubURL, registerReq); err != nil {
+	if err := registerHost(*hubURL, registerReq, *hubAuthToken); err != nil {
 		log.Printf("initial host registration failed: %v", err)
 	}
-	go heartbeatLoop(*hubURL, registerReq)
+	go heartbeatLoop(*hubURL, registerReq, *hubAuthToken)
 
 	hostServer := server.NewWithConfig(store, server.Config{
 		Agents:    agentRegistry,
@@ -168,32 +169,38 @@ func repoInfos(registry *repo.Registry) []protocol.RepoInfo {
 	return infos
 }
 
-func heartbeatLoop(hubURL string, req protocol.RegisterHostRequest) {
+func heartbeatLoop(hubURL string, req protocol.RegisterHostRequest, authToken string) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		if err := heartbeat(hubURL, req.HostID); err != nil {
-			if registerErr := registerHost(hubURL, req); registerErr != nil {
+		if err := heartbeat(hubURL, req.HostID, authToken); err != nil {
+			if registerErr := registerHost(hubURL, req, authToken); registerErr != nil {
 				log.Printf("heartbeat failed: %v; register failed: %v", err, registerErr)
 			}
 		}
 	}
 }
 
-func registerHost(hubURL string, req protocol.RegisterHostRequest) error {
-	return postJSON(strings.TrimRight(hubURL, "/")+"/hosts/register", req)
+func registerHost(hubURL string, req protocol.RegisterHostRequest, authToken string) error {
+	return postJSON(strings.TrimRight(hubURL, "/")+"/hosts/register", req, authToken)
 }
 
-func heartbeat(hubURL, hostID string) error {
-	return postJSON(strings.TrimRight(hubURL, "/")+"/hosts/"+hostID+"/heartbeat", map[string]string{})
+func heartbeat(hubURL, hostID, authToken string) error {
+	return postJSON(strings.TrimRight(hubURL, "/")+"/hosts/"+hostID+"/heartbeat", map[string]string{}, authToken)
 }
 
-func postJSON(target string, value any) error {
+func postJSON(target string, value any, authToken string) error {
 	body, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(target, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	setBearerAuth(req, authToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -202,6 +209,12 @@ func postJSON(target string, value any) error {
 		return fmt.Errorf("%s returned %s", target, resp.Status)
 	}
 	return nil
+}
+
+func setBearerAuth(req *http.Request, token string) {
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 }
 
 func sanitizeHostID(value string) string {

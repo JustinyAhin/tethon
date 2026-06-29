@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -51,5 +53,19 @@ func TestRepoInfos(t *testing.T) {
 	}
 	if infos[1].ID != "beta" {
 		t.Fatalf("unexpected second repo info: %+v", infos[1])
+	}
+}
+
+func TestPostJSONSendsHubAuthToken(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Fatalf("Authorization = %q, want Bearer secret", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ts.Close)
+
+	if err := postJSON(ts.URL, map[string]string{"ok": "true"}, "secret"); err != nil {
+		t.Fatal(err)
 	}
 }

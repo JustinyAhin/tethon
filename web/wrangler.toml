@@ -1,9 +1,19 @@
-name = "web"
+name = "tethon-web"
 compatibility_date = "2026-06-28"
 compatibility_flags = ["nodejs_als"]
 main = ".svelte-kit/cloudflare/_worker.js"
-workers_dev = true
-preview_urls = true
+workers_dev = false
+preview_urls = false
+
+[[routes]]
+pattern = "web.tethon.dev"
+custom_domain = true
+
+[observability]
+enabled = true
+
+[observability.traces]
+enabled = true
 
 [assets]
 binding = "ASSETS"

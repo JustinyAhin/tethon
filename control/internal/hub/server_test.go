@@ -43,6 +43,40 @@ func TestRegisterAndListHosts(t *testing.T) {
 	}
 }
 
+func TestHubRequiresBearerTokenWhenConfigured(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthToken("secret")
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "", http.StatusUnauthorized)
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "wrong", http.StatusUnauthorized)
+	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "secret", http.StatusOK)
+}
+
+func TestHubBearerTokenAllowsSessionLifecycle(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthToken("secret")
+	hubTS := httptest.NewServer(hub.Handler())
+	t.Cleanup(hubTS.Close)
+	hostTS := newHost(t)
+
+	registerHostAuth(t, hubTS.URL, "secret", protocol.RegisterHostRequest{
+		HostID:    "mac",
+		Name:      "Mac",
+		URL:       hostTS.URL,
+		Agents:    []string{"fake"},
+		RepoRoots: []string{"."},
+	})
+
+	session := createSessionAuth(t, hubTS.URL, "secret", protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
+	postJSONAuth(t, hubTS.URL+"/sessions/"+session.ID+"/input", "secret", protocol.InputRequest{Text: "continue"})
+	events := streamEventsAuth(t, hubTS.URL, session.ID, "secret", 3, 2)
+
+	assertSeqs(t, events, []int64{4, 5})
+	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})
+}
+
 func TestHubCreatesSessionAndStreamsReplayThroughHost(t *testing.T) {
 	hubTS, hostTS := newHubAndHost(t, time.Second)
 	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
@@ -256,19 +290,51 @@ func createSession(t *testing.T, hubURL string, req protocol.CreateSessionReques
 	return out
 }
 
+func registerHostAuth(t *testing.T, hubURL, authToken string, req protocol.RegisterHostRequest) {
+	t.Helper()
+	var out protocol.HostSummary
+	postJSONIntoAuth(t, hubURL+"/hosts/register", authToken, req, &out)
+}
+
+func createSessionAuth(t *testing.T, hubURL, authToken string, req protocol.CreateSessionRequest) protocol.CreateSessionResponse {
+	t.Helper()
+	var out protocol.CreateSessionResponse
+	postJSONIntoAuth(t, hubURL+"/sessions", authToken, req, &out)
+	return out
+}
+
 func postJSON(t *testing.T, url string, value any) {
 	t.Helper()
 	var out any
 	postJSONInto(t, url, value, &out)
 }
 
+func postJSONAuth(t *testing.T, url, authToken string, value any) {
+	t.Helper()
+	var out any
+	postJSONIntoAuth(t, url, authToken, value, &out)
+}
+
 func postJSONInto(t *testing.T, url string, value any, out any) {
+	t.Helper()
+	postJSONIntoAuth(t, url, "", value, out)
+}
+
+func postJSONIntoAuth(t *testing.T, url, authToken string, value any, out any) {
 	t.Helper()
 	body, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +344,25 @@ func postJSONInto(t *testing.T, url string, value any, out any) {
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertStatus(t *testing.T, method, target, authToken string, want int) {
+	t.Helper()
+	req, err := http.NewRequest(method, target, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != want {
+		t.Fatalf("%s %s returned %s, want %d", method, target, resp.Status, want)
 	}
 }
 
@@ -298,12 +383,20 @@ func getJSON(t *testing.T, url string, out any) {
 
 func streamEvents(t *testing.T, baseURL, sessionID string, from int64, count int) []protocol.Event {
 	t.Helper()
+	return streamEventsAuth(t, baseURL, sessionID, "", from, count)
+}
+
+func streamEventsAuth(t *testing.T, baseURL, sessionID, authToken string, from int64, count int) []protocol.Event {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/sessions/"+sessionID+"/stream?from="+strconvInt(from), nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -298,6 +298,13 @@
 				],
 				"type": "object"
 			}
+		},
+		"securitySchemes": {
+			"bearerAuth": {
+				"description": "Shared bearer token for deployed hub clients.",
+				"scheme": "bearer",
+				"type": "http"
+			}
 		}
 	},
 	"info": {
@@ -945,5 +952,10 @@
 				"tags": ["sessions"]
 			}
 		}
-	}
+	},
+	"security": [
+		{
+			"bearerAuth": []
+		}
+	]
 }

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ type Server struct {
 	hostTimeout time.Duration
 	now         func() time.Time
 	client      *http.Client
+	authToken   string
 }
 
 type hostRecord struct {
@@ -46,7 +49,36 @@ func New(hostTimeout time.Duration) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.humaHandler()
+	next := s.humaHandler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.authorized(r) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) SetAuthToken(token string) {
+	s.authToken = token
+}
+
+func (s *Server) authorized(r *http.Request) bool {
+	if s.authToken == "" {
+		return true
+	}
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return false
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	want := sha256.Sum256([]byte(s.authToken))
+	got := sha256.Sum256([]byte(token))
+	return subtle.ConstantTimeCompare(got[:], want[:]) == 1
 }
 
 func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
