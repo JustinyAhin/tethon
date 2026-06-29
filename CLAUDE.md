@@ -28,6 +28,28 @@ Current routing caveat: the host daemon registers and heartbeats outbound, but t
 - Keep repo-level instructions here. Put stack-specific rules in the nearest component `CLAUDE.md` (e.g. `daemon/CLAUDE.md`) as those land.
 - Never read `.env` files. When environment variables need adding or updating, describe what's needed and let the user handle it.
 
+## After Runtime Changes
+
+When code changes affect a running local or deployed Tethon component, tell the
+user exactly which runtime still needs restarting or redeploying.
+
+- `control/cmd/tethon-hostd`, `control/internal/server`, `control/internal/agent`,
+  `control/internal/repo`, `control/internal/worktree`, or `scripts/macos-hostd.sh`
+  changed: run Go checks from `control/`, then tell the user to reinstall and
+  restart local hostd with `scripts/macos-hostd.sh install ...same args...` and
+  `scripts/macos-hostd.sh restart`.
+- `control/cmd/tethon-hub`, `control/internal/hub`, or `deploy/hub/` changed:
+  run Go checks from `control/`, run
+  `TETHON_HUB_AUTH_TOKEN=dummy docker compose -f deploy/hub/docker-compose.yml config`,
+  then tell the user to redeploy the hub in Dokploy.
+- `web/` changed: run `bun lint` and `bun check` from `web/`; if hub API shape
+  changed, run `bun run gen:hub-sdk`; tell the user the Worker must be deployed
+  or promoted for `web.tethon.dev` to change.
+- Docs-only changes need no runtime restart or deploy.
+
+Never claim a local/deployed runtime has changed just because code was committed.
+Say what still needs restart/redeploy.
+
 ## Git
 
 - **Never commit unless explicitly asked.** Do the work, run the checks, then stop and report.
