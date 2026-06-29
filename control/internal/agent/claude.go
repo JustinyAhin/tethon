@@ -621,7 +621,7 @@ func (s *claudeSession) markCancelled(ctx context.Context) ([]protocol.Event, er
 	s.doneEmitted = true
 	s.mu.Unlock()
 
-	event, err := s.sink.AppendEvent(ctx, protocol.EventDone, map[string]string{"reason": "cancelled"})
+	event, err := s.sink.AppendEvent(ctx, protocol.EventDone, protocol.DonePayload{Reason: "cancelled"})
 	if err != nil {
 		return nil, err
 	}

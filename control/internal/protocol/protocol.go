@@ -74,6 +74,8 @@ type CreateSessionRequest struct {
 	Prompt  string `json:"prompt,omitempty"`
 }
 
+type SessionStartedPayload = CreateSessionRequest
+
 type CreateSessionResponse struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
@@ -141,6 +143,10 @@ type InputReceivedPayload struct {
 
 type ErrorPayload struct {
 	Message string `json:"message"`
+}
+
+type DonePayload struct {
+	Reason string `json:"reason"`
 }
 
 type UsagePayload struct {

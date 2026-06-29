@@ -12,7 +12,8 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
-		"gen": "wrangler types"
+		"gen": "wrangler types",
+		"gen:protocol": "cd ../control && go run github.com/gzuidhof/tygo@v0.2.21 generate && cd ../web && prettier --write src/lib/generated/protocol.ts src/lib/types.ts"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

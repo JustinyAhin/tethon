@@ -73,7 +73,7 @@ func (s *fakeSession) Input(ctx context.Context, text string) ([]protocol.Event,
 	events = append(events, event)
 
 	if strings.EqualFold(text, "done") || strings.EqualFold(text, "finish") {
-		event, err = s.sink.AppendEvent(ctx, protocol.EventDone, map[string]string{"reason": "fake agent finished"})
+		event, err = s.sink.AppendEvent(ctx, protocol.EventDone, protocol.DonePayload{Reason: "fake agent finished"})
 		if err != nil {
 			return nil, err
 		}
@@ -116,7 +116,7 @@ func (s *fakeSession) Cancel(ctx context.Context) ([]protocol.Event, error) {
 	if s.Terminal() {
 		return nil, ErrSessionDone
 	}
-	event, err := s.sink.AppendEvent(ctx, protocol.EventDone, map[string]string{"reason": "cancelled"})
+	event, err := s.sink.AppendEvent(ctx, protocol.EventDone, protocol.DonePayload{Reason: "cancelled"})
 	if err != nil {
 		return nil, err
 	}

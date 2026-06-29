@@ -26,7 +26,7 @@ func TestAppendReplayOrdersEventsAfterCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := store.AppendEvent(ctx, session.ID, protocol.EventDone, map[string]string{"reason": "test"})
+	third, err := store.AppendEvent(ctx, session.ID, protocol.EventDone, protocol.DonePayload{Reason: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestListSessionSummariesReturnsAllSessionsWithLastSeq(t *testing.T) {
 	if _, err := store.AppendEvent(ctx, done.ID, protocol.EventOutput, protocol.OutputPayload{Text: "one"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AppendEvent(ctx, done.ID, protocol.EventDone, map[string]string{"reason": "test"}); err != nil {
+	if _, err := store.AppendEvent(ctx, done.ID, protocol.EventDone, protocol.DonePayload{Reason: "test"}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,0 +1,8 @@
+type_mappings:
+  time.Time: "string /* RFC3339 */"
+  json.RawMessage: "unknown"
+
+packages:
+  - path: "tethon/internal/protocol"
+    output_path: "../web/src/lib/generated/protocol.ts"
+    indent: "\t"

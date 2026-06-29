@@ -63,7 +63,7 @@ func TestListSessionsReturnsLocalSummaries(t *testing.T) {
 	if _, err := store.AppendEvent(context.Background(), done.ID, protocol.EventOutput, protocol.OutputPayload{Text: "done"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AppendEvent(context.Background(), done.ID, protocol.EventDone, map[string]string{"reason": "test"}); err != nil {
+	if _, err := store.AppendEvent(context.Background(), done.ID, protocol.EventDone, protocol.DonePayload{Reason: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	running, err := store.CreateSession(context.Background(), sessionlog.CreateSessionParams{Repo: ".", Agent: "fake", Status: "running"})
