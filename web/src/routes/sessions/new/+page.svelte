@@ -114,9 +114,12 @@
 				<p class="text-green-700">
 					id: <code>{createSession.result.id}</code> · status: {createSession.result.status}
 				</p>
-				<p class="mt-1 text-gray-500">
-					Session detail view coming soon (/sessions/{createSession.result.id}).
-				</p>
+				<a
+					href="/sessions/{createSession.result.id}"
+					class="mt-1 inline-block text-blue-600 hover:underline"
+				>
+					Open session →
+				</a>
 			</div>
 		{:else}
 			<p class="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">

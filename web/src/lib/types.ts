@@ -23,4 +23,77 @@ type CreateSessionResponse = {
 	status: string; // e.g. "running"
 };
 
-export type { RepoInfo, HostSummary, CreateSessionResponse };
+type SessionEventType =
+	| 'session_started'
+	| 'output'
+	| 'input_received'
+	| 'awaiting_approval'
+	| 'approval_resolved'
+	| 'usage'
+	| 'done'
+	| 'error';
+
+type SessionEvent = {
+	session_id: string;
+	seq: number;
+	type: SessionEventType;
+	created_at: string;
+	payload: unknown;
+};
+
+type SessionStartedPayload = {
+	repo?: string;
+	cwd?: string;
+	branch?: string;
+	base_ref?: string;
+	agent?: string;
+	prompt?: string;
+};
+
+type OutputPayload = { text: string };
+
+type InputReceivedPayload = { text: string };
+
+type ApprovalPayload = {
+	request_id: string;
+	command: string;
+	reason: string;
+	tool_name?: string;
+	tool_input?: unknown;
+	agent?: string;
+};
+
+type ApprovalResolvedPayload = {
+	request_id: string;
+	action: string;
+	text?: string;
+};
+
+type UsagePayload = {
+	agent: string;
+	backend: string;
+	cli: string;
+	model?: string;
+	tokens: { total_billable?: number; input?: number; output?: number };
+	cost?: { total_usd: number; currency: string };
+};
+
+type DonePayload = { reason: string };
+
+type ErrorPayload = { message: string };
+
+export type {
+	RepoInfo,
+	HostSummary,
+	CreateSessionResponse,
+	SessionEventType,
+	SessionEvent,
+	SessionStartedPayload,
+	OutputPayload,
+	InputReceivedPayload,
+	ApprovalPayload,
+	ApprovalResolvedPayload,
+	UsagePayload,
+	DonePayload,
+	ErrorPayload
+};

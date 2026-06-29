@@ -1,6 +1,7 @@
-import { form } from '$app/server';
+import { form, query } from '$app/server';
+import { error } from '@sveltejs/kit';
 import * as v from 'valibot';
-import type { CreateSessionResponse } from '$lib/types';
+import type { CreateSessionResponse, SessionEvent } from '$lib/types';
 import { hubBase, hubErrorMessage } from './hub';
 
 const optionalText = v.optional(v.pipe(v.string(), v.trim()), '');
@@ -45,4 +46,47 @@ const createSession = form(CreateSessionSchema, async (data): Promise<CreateResu
 	return { ok: true, id: out.id, status: out.status };
 });
 
-export { createSession };
+const parseFrame = (frame: string): SessionEvent | null => {
+	for (const line of frame.split('\n')) {
+		if (line.startsWith('data:')) {
+			try {
+				return JSON.parse(line.slice(5).trimStart()) as SessionEvent;
+			} catch {
+				return null;
+			}
+		}
+	}
+	return null;
+};
+
+const streamSession = query.live(v.string(), async function* (id) {
+	const base = hubBase();
+	const controller = new AbortController();
+	try {
+		const res = await fetch(`${base}/sessions/${id}/stream?from=0`, {
+			signal: controller.signal,
+			headers: { accept: 'text/event-stream' }
+		});
+		if (!res.ok || !res.body) error(res.status, await hubErrorMessage(res));
+
+		const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+		let buffer = '';
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += value;
+			let sep: number;
+			while ((sep = buffer.indexOf('\n\n')) !== -1) {
+				const event = parseFrame(buffer.slice(0, sep));
+				buffer = buffer.slice(sep + 2);
+				if (!event) continue;
+				yield event;
+				if (event.type === 'done') return;
+			}
+		}
+	} finally {
+		controller.abort();
+	}
+});
+
+export { createSession, streamSession };

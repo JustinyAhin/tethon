@@ -1,0 +1,151 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
+	import { page } from '$app/state';
+	import { streamSession } from '$lib/remote-functions/sessions.remote';
+	import type {
+		SessionEvent,
+		SessionStartedPayload,
+		OutputPayload,
+		InputReceivedPayload,
+		ApprovalPayload,
+		ApprovalResolvedPayload,
+		UsagePayload,
+		DonePayload,
+		ErrorPayload
+	} from '$lib/types';
+
+	const id = `${page.params.host}/${page.params.local}`;
+	const stream = streamSession(id);
+
+	let events = $state<SessionEvent[]>([]);
+	const seen = new SvelteSet<number>();
+	let logEl = $state<HTMLElement>();
+
+	const status = $derived(
+		stream.error ? 'error' : stream.done ? 'finished' : stream.connected ? 'live' : 'connecting…'
+	);
+
+	onMount(() => {
+		let cancelled = false;
+		(async () => {
+			try {
+				for await (const ev of stream) {
+					if (cancelled) break;
+					if (seen.has(ev.seq)) continue;
+					seen.add(ev.seq);
+					events.push(ev);
+				}
+			} catch {
+				// surfaced via stream.error
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	$effect(() => {
+		if (events.length && logEl) logEl.scrollTo({ top: logEl.scrollHeight });
+	});
+</script>
+
+<section>
+	<div class="mb-4 flex items-center justify-between gap-2">
+		<div>
+			<h1 class="text-xl font-semibold">Session</h1>
+			<p class="text-xs text-gray-500">{id}</p>
+		</div>
+		<div class="flex items-center gap-3 text-sm">
+			<span
+				class="rounded-full px-2 py-0.5 text-xs font-medium {status === 'live'
+					? 'bg-green-100 text-green-700'
+					: status === 'error'
+						? 'bg-red-100 text-red-700'
+						: 'bg-gray-100 text-gray-500'}"
+			>
+				{status}
+			</span>
+			<button class="text-blue-600 hover:underline" onclick={() => stream.reconnect()}>
+				Reconnect
+			</button>
+		</div>
+	</div>
+
+	{#if stream.error}
+		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+			Stream error: {stream.error.message ?? 'disconnected'}
+		</p>
+	{/if}
+
+	<div bind:this={logEl} class="max-h-[70vh] space-y-2 overflow-y-auto">
+		{#each events as event (event.seq)}
+			{#if event.type === 'session_started'}
+				{@const p = event.payload as SessionStartedPayload}
+				<div class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+					<p class="font-medium">Session started</p>
+					<dl class="mt-1 space-y-0.5 text-gray-600">
+						<div><span class="text-gray-400">repo:</span> {p.repo ?? '—'}</div>
+						<div><span class="text-gray-400">agent:</span> {p.agent ?? '—'}</div>
+						<div><span class="text-gray-400">branch:</span> {p.branch ?? '—'}</div>
+						{#if p.prompt}
+							<div class="whitespace-pre-wrap">
+								<span class="text-gray-400">prompt:</span>
+								{p.prompt}
+							</div>
+						{/if}
+					</dl>
+				</div>
+			{:else if event.type === 'output'}
+				<div class="rounded-lg border border-gray-200 p-3 text-sm whitespace-pre-wrap">
+					{(event.payload as OutputPayload).text}
+				</div>
+			{:else if event.type === 'input_received'}
+				<div
+					class="ml-8 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm whitespace-pre-wrap"
+				>
+					{(event.payload as InputReceivedPayload).text}
+				</div>
+			{:else if event.type === 'awaiting_approval'}
+				{@const p = event.payload as ApprovalPayload}
+				<div class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
+					<p class="font-medium text-amber-800">Awaiting approval</p>
+					<p class="text-amber-700">{p.command || p.tool_name || 'tool request'}</p>
+					{#if p.tool_input}
+						<pre class="mt-1 overflow-x-auto rounded bg-amber-100/60 p-2 text-xs">{JSON.stringify(
+								p.tool_input,
+								null,
+								2
+							)}</pre>
+					{/if}
+				</div>
+			{:else if event.type === 'approval_resolved'}
+				{@const p = event.payload as ApprovalResolvedPayload}
+				<p class="text-xs text-gray-500">approval {p.action}{p.text ? `: ${p.text}` : ''}</p>
+			{:else if event.type === 'usage'}
+				{@const p = event.payload as UsagePayload}
+				<p class="text-xs text-gray-400">
+					usage · {p.tokens?.total_billable ?? 0} tokens{p.cost
+						? ` · $${p.cost.total_usd.toFixed(4)}`
+						: ''}
+				</p>
+			{:else if event.type === 'done'}
+				<p class="text-sm text-gray-500">
+					Session finished ({(event.payload as DonePayload).reason})
+				</p>
+			{:else if event.type === 'error'}
+				<p class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+					{(event.payload as ErrorPayload).message}
+				</p>
+			{:else}
+				<pre class="overflow-x-auto rounded bg-gray-100 p-2 text-xs text-gray-500">{JSON.stringify(
+						event.payload
+					)}</pre>
+			{/if}
+		{/each}
+
+		{#if events.length === 0 && !stream.error}
+			<p class="text-sm text-gray-500">Waiting for events…</p>
+		{/if}
+	</div>
+</section>
