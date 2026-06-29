@@ -300,13 +300,14 @@ doctor_host_id_from_status() {
 doctor_host_online_from_hub() {
 	local hosts_json="$1"
 	local host_id="$2"
-	local compact="${hosts_json//$'\n'/}"
-	if [[ "$compact" != *"\"host_id\":\"$host_id\""* ]]; then
+	local compact="${hosts_json//[[:space:]]/}"
+	local needle="\"host_id\":\"$host_id\""
+	if [[ "$compact" != *"$needle"* ]]; then
 		printf "missing"
 		return
 	fi
-	local tail="${compact#*"\"host_id\":\"$host_id\""}"
-	local host_entry="${tail%%\}*}"
+	local host_entry="${compact#*"$needle"}"
+	host_entry="${host_entry%%\"host_id\":*}"
 	if [[ "$host_entry" == *'"online":true'* ]]; then
 		printf "online"
 	else

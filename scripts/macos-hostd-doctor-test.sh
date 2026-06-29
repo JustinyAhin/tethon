@@ -42,6 +42,8 @@ doctor_token_present
 assert_eq "$(doctor_host_id_from_status '{"host_id":"mac"}')" "mac" "status host id"
 assert_eq "$(doctor_host_online_from_hub '{"hosts":[{"host_id":"mac","online":true}]}' "mac")" "online" "hub online"
 assert_eq "$(doctor_host_online_from_hub '{"hosts":[{"host_id":"mac","online":false}]}' "mac")" "offline" "hub offline"
+assert_eq "$(doctor_host_online_from_hub '{"hosts":[{"host_id":"mac","repos":[{"id":"tethon","name":"tethon"}],"last_seen":"2026-06-29T08:47:34Z","online":true}]}' "mac")" "online" "hub online with nested repos"
+assert_eq "$(doctor_host_online_from_hub '{"hosts":[{"host_id":"other","online":true},{"host_id":"mac","repos":[{"id":"tethon","name":"tethon"}],"online":false}]}' "mac")" "offline" "hub offline with multiple hosts"
 assert_eq "$(doctor_host_online_from_hub '{"hosts":[]}' "mac")" "missing" "hub missing"
 
 echo "PASS macos-hostd doctor helpers"
