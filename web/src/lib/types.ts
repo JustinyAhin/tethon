@@ -23,6 +23,24 @@ type CreateSessionResponse = {
 	status: string; // e.g. "running"
 };
 
+type SessionSummary = {
+	id: string; // "host_id/local_id"
+	host_id: string;
+	repo_id?: string;
+	repo: string;
+	cwd: string;
+	branch: string;
+	base_ref?: string;
+	agent: string;
+	backend?: string;
+	cli?: string;
+	model?: string;
+	status: string;
+	created_at: string; // RFC3339
+	updated_at: string;
+	last_seq: number;
+};
+
 type SessionEventType =
 	| 'session_started'
 	| 'output'
@@ -86,6 +104,7 @@ export type {
 	RepoInfo,
 	HostSummary,
 	CreateSessionResponse,
+	SessionSummary,
 	SessionEventType,
 	SessionEvent,
 	SessionStartedPayload,

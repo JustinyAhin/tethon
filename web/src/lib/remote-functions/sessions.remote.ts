@@ -1,8 +1,16 @@
 import { form, query } from '$app/server';
 import { error } from '@sveltejs/kit';
 import * as v from 'valibot';
-import type { CreateSessionResponse, SessionEvent } from '$lib/types';
+import type { CreateSessionResponse, SessionEvent, SessionSummary } from '$lib/types';
 import { hubBase, hubErrorMessage } from './hub';
+
+const getSessions = query(async (): Promise<SessionSummary[]> => {
+	const base = hubBase();
+	const res = await fetch(`${base}/sessions`);
+	if (!res.ok) error(res.status, await hubErrorMessage(res));
+	const data = (await res.json()) as { sessions?: SessionSummary[] };
+	return data.sessions ?? [];
+});
 
 const optionalText = v.optional(v.pipe(v.string(), v.trim()), '');
 
@@ -89,4 +97,4 @@ const streamSession = query.live(v.string(), async function* (id) {
 	}
 });
 
-export { createSession, streamSession };
+export { getSessions, createSession, streamSession };
