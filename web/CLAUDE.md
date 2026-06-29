@@ -61,6 +61,8 @@ bun lint                     # prettier --check + eslint
 bun check                    # wrangler types + svelte-check (the type check)
 ```
 
+If `../control/internal/protocol` changes any JSON-facing type, event payload, request/response shape, or exported protocol constant, also run `bun run gen:protocol` before `bun check`.
+
 `bun check` is the type check — it runs `svelte-check` against `tsconfig.json` plus `wrangler types`. If you start `bun dev` while working, kill it before finishing.
 
 ## Commands
@@ -70,6 +72,7 @@ bun dev        # dev server
 bun build      # production build (wrangler types --check && vite build)
 bun preview    # preview the built Worker locally
 bun gen        # regenerate Cloudflare Worker types (after editing wrangler.toml)
+bun gen:protocol # regenerate TS protocol types from ../control/internal/protocol
 bun check      # svelte-check + wrangler types
 bun lint       # prettier + eslint checks
 bun format     # prettier write

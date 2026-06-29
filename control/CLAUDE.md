@@ -62,6 +62,13 @@ short-lived sessions from ballooning disk:
 - Keep SQLite pure-Go unless there is a strong reason to require CGO.
 - Any event envelope, event payload, or database schema change needs replay/persistence test coverage.
 - Treat event JSON as a client contract. Avoid breaking it casually once clients consume it.
+- If `internal/protocol` changes any JSON-facing type, event payload, request/response shape, or exported protocol constant, regenerate web protocol types and type-check the web app:
+
+  ```sh
+  cd ../web
+  bun run gen:protocol
+  bun check
+  ```
 
 ## After editing Go code
 
