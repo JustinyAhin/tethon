@@ -2,7 +2,12 @@
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { page } from '$app/state';
-	import { streamSession, sendInput, resolveApproval } from '$lib/remote-functions/sessions.remote';
+	import {
+		streamSession,
+		sendInput,
+		resolveApproval,
+		cancelSession
+	} from '$lib/remote-functions/sessions.remote';
 	import type {
 		SessionEvent,
 		SessionStartedPayload,
@@ -66,6 +71,17 @@
 
 	let text = $state('');
 	let sendError = $state('');
+	let cancelError = $state('');
+
+	const cancel = async () => {
+		if (stream.done || cancelSession.pending > 0) return;
+		const res = await cancelSession({ id });
+		if (res.ok) {
+			cancelError = '';
+		} else {
+			cancelError = res.error;
+		}
+	};
 
 	const send = async () => {
 		if (!text.trim() || sendInput.pending > 0) return;
@@ -143,8 +159,23 @@
 			<button class="text-blue-600 hover:underline" onclick={() => stream.reconnect()}>
 				Reconnect
 			</button>
+			{#if !stream.done && !stream.error}
+				<button
+					onclick={cancel}
+					disabled={cancelSession.pending > 0}
+					class="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+				>
+					{cancelSession.pending > 0 ? 'Stopping…' : 'Stop'}
+				</button>
+			{/if}
 		</div>
 	</div>
+
+	{#if cancelError}
+		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+			{cancelError}
+		</p>
+	{/if}
 
 	{#if stream.error}
 		<p class="mb-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">

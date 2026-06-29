@@ -4,6 +4,7 @@ import * as v from 'valibot';
 import type { SessionSummary } from '$lib/types';
 import {
 	HubAPIError,
+	cancelSession as cancelHubSession,
 	createSession as createHubSession,
 	listSessions,
 	resolveApproval as resolveHubApproval,
@@ -140,4 +141,18 @@ const resolveApproval = command(
 	}
 );
 
-export { getSessions, createSession, streamSession, sendInput, resolveApproval };
+const CancelSessionSchema = v.object({
+	id: v.pipe(v.string(), v.nonEmpty())
+});
+
+const cancelSession = command(CancelSessionSchema, async ({ id }): Promise<SendResult> => {
+	try {
+		await cancelHubSession({ baseUrl: hubBase(), id });
+		return { ok: true };
+	} catch (err) {
+		if (err instanceof HubAPIError) return { ok: false, error: err.message };
+		throw err;
+	}
+});
+
+export { getSessions, createSession, streamSession, sendInput, resolveApproval, cancelSession };
