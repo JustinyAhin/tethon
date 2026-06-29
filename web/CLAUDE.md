@@ -38,6 +38,7 @@ When you need Svelte or SvelteKit docs, use the LLM-optimized versions:
 
 - Use direct `export const` for route exports (`load`, `entries`, `prerender`, etc.) — these must be inline named exports, so they're exempt from the exports-at-end rule. Don't add explicit `$types` annotations unless the code genuinely needs them.
 - Prefer **remote functions** (`.remote.ts`) for client–server communication: `query` (read), `form` (form submit with progressive enhancement), `command` (write without a form). Place them in `src/lib/remote-functions/` and import via the `$lib` alias.
+- Hub HTTP calls should go through **`src/lib/server/hub-client.ts`**, which wraps the generated OpenAPI client. Avoid raw `fetch` to the hub in remote functions unless the generated SDK cannot express the behavior, such as the typed SSE stream helper.
 - Reserve `+server.ts` API routes for things remote functions can't do: webhooks, non-browser clients, third-party callbacks.
 - Name component files in kebab-case (e.g. `host-card.svelte`, not `HostCard.svelte`); import them under a PascalCase identifier.
 - The hub is the source of truth for session state — the web app reads/relays it, it does not own it. Mirror the protocol invariants in `../control/CLAUDE.md` (append-only events, cursor replay, reconnect-with-last-cursor); don't invent client-side state that diverges from the event log.
@@ -63,6 +64,8 @@ bun check                    # wrangler types + svelte-check (the type check)
 
 If `../control/internal/protocol` changes any JSON-facing type, event payload, request/response shape, or exported protocol constant, also run `bun run gen:protocol` before `bun check`.
 
+If `../control/internal/hub` changes any client-facing hub route, request/response shape, path/query parameter, status behavior, or OpenAPI metadata, also run `bun run gen:hub-sdk` before `bun check`.
+
 `bun check` is the type check — it runs `svelte-check` against `tsconfig.json` plus `wrangler types`. If you start `bun dev` while working, kill it before finishing.
 
 ## Commands
@@ -73,6 +76,7 @@ bun build      # production build (wrangler types --check && vite build)
 bun preview    # preview the built Worker locally
 bun gen        # regenerate Cloudflare Worker types (after editing wrangler.toml)
 bun gen:protocol # regenerate TS protocol types from ../control/internal/protocol
+bun gen:hub-sdk # regenerate Hub OpenAPI JSON and TypeScript SDK types
 bun check      # svelte-check + wrangler types
 bun lint       # prettier + eslint checks
 bun format     # prettier write

@@ -8,6 +8,7 @@ Single Go module (`module tethon`). General repo rules live in the root `CLAUDE.
 
 - `cmd/tethon/` — CLI client entrypoint (`hosts`, `session` subcommands); talks to the hub
 - `cmd/tethon-hub/` — hub entrypoint; host registry and client-facing relay
+- `cmd/tethon-openapi/` — emits the client-facing hub OpenAPI schema for web/mobile SDK generation
 - `cmd/tethon-hostd/` — host daemon entrypoint; owns session state and agent processes
 - `internal/hub/` — hub HTTP handlers, host registry, and session proxying
 - `internal/protocol/` — event + session schema (the wire contract)
@@ -27,7 +28,7 @@ Single Go module (`module tethon`). General repo rules live in the root `CLAUDE.
 - Keep `internal/protocol` dependency-light. It defines wire contracts and shared payload types only.
 - Keep `internal/sessionlog` independent of HTTP/SSE concerns.
 - Keep `internal/server` responsible for host-owned session HTTP behavior, request validation, and stream formatting.
-- Keep `internal/hub` independent of session storage. It routes and relays; it does not own session truth.
+- Keep `internal/hub` independent of session storage. It routes and relays; it does not own session truth. Its client-facing routes are Huma/OpenAPI-backed; host-daemon routes remain plain `net/http` internals.
 - Keep `cmd/tethon` thin: parse flags, call server/client behavior, and print output.
 
 ## Worktree disk hygiene
@@ -67,6 +68,14 @@ short-lived sessions from ballooning disk:
   ```sh
   cd ../web
   bun run gen:protocol
+  bun check
+  ```
+
+- If `internal/hub` changes any client-facing route, request/response shape, path/query parameter, status behavior, or OpenAPI metadata, regenerate the hub SDK and type-check the web app:
+
+  ```sh
+  cd ../web
+  bun run gen:hub-sdk
   bun check
   ```
 
