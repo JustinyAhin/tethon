@@ -15,7 +15,7 @@ import (
 	"tethon/internal/protocol"
 )
 
-const defaultAddr = "127.0.0.1:39180"
+const defaultHubURL = "http://127.0.0.1:39180"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -51,7 +51,7 @@ func hosts(args []string) error {
 }
 
 func hostsList(args []string) error {
-	addr, authToken, rest, err := hubFlags(args)
+	hubURL, authToken, rest, err := hubFlags(args)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func hostsList(args []string) error {
 		return fmt.Errorf("usage: tethon hosts list")
 	}
 	var resp any
-	return getJSON("http://"+addr+"/hosts", authToken, &resp, os.Stdout)
+	return getJSON(hubEndpoint(hubURL, "/hosts"), authToken, &resp, os.Stdout)
 }
 
 func session(args []string) error {
@@ -89,7 +89,7 @@ func session(args []string) error {
 
 func sessionStart(args []string) error {
 	fs := flag.NewFlagSet("session start", flag.ExitOnError)
-	addr := fs.String("addr", defaultAddr, "hub address")
+	hubURL := fs.String("hub-url", defaultHubURL, "hub URL")
 	authToken := fs.String("auth-token", os.Getenv("TETHON_HUB_AUTH_TOKEN"), "bearer token for hub requests")
 	hostID := fs.String("host", "", "host id")
 	repo := fs.String("repo", "", "repo path")
@@ -106,7 +106,7 @@ func sessionStart(args []string) error {
 	}
 
 	var resp protocol.CreateSessionResponse
-	return postJSON("http://"+*addr+"/sessions", *authToken, protocol.CreateSessionRequest{
+	return postJSON(hubEndpoint(*hubURL, "/sessions"), *authToken, protocol.CreateSessionRequest{
 		HostID: *hostID,
 		Repo:   *repo,
 		CWD:    *cwd,
@@ -117,7 +117,7 @@ func sessionStart(args []string) error {
 }
 
 func sessionStream(args []string) error {
-	addr, authToken, rest, err := hubFlags(args)
+	hubURL, authToken, rest, err := hubFlags(args)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func sessionStream(args []string) error {
 		return fmt.Errorf("usage: tethon session stream <host_id/session_id> --from <seq>")
 	}
 
-	url := fmt.Sprintf("http://%s/sessions/%s/stream?from=%d", addr, rest[0], from)
+	url := fmt.Sprintf("%s?from=%d", hubEndpoint(hubURL, "/sessions/"+rest[0]+"/stream"), from)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func sessionStream(args []string) error {
 }
 
 func sessionInput(args []string) error {
-	addr, authToken, rest, err := hubFlags(args)
+	hubURL, authToken, rest, err := hubFlags(args)
 	if err != nil {
 		return err
 	}
@@ -157,11 +157,11 @@ func sessionInput(args []string) error {
 		return fmt.Errorf("usage: tethon session input <host_id/session_id> <text>")
 	}
 	var resp any
-	return postJSON("http://"+addr+"/sessions/"+rest[0]+"/input", authToken, protocol.InputRequest{Text: strings.Join(rest[1:], " ")}, &resp, os.Stdout)
+	return postJSON(hubEndpoint(hubURL, "/sessions/"+rest[0]+"/input"), authToken, protocol.InputRequest{Text: strings.Join(rest[1:], " ")}, &resp, os.Stdout)
 }
 
 func sessionCancel(args []string) error {
-	addr, authToken, rest, err := hubFlags(args)
+	hubURL, authToken, rest, err := hubFlags(args)
 	if err != nil {
 		return err
 	}
@@ -169,11 +169,11 @@ func sessionCancel(args []string) error {
 		return fmt.Errorf("usage: tethon session cancel <host_id/session_id>")
 	}
 	var resp any
-	return postJSON("http://"+addr+"/sessions/"+rest[0]+"/cancel", authToken, map[string]string{}, &resp, os.Stdout)
+	return postJSON(hubEndpoint(hubURL, "/sessions/"+rest[0]+"/cancel"), authToken, map[string]string{}, &resp, os.Stdout)
 }
 
 func sessionApproval(args []string, action string) error {
-	addr, authToken, rest, err := hubFlags(args)
+	hubURL, authToken, rest, err := hubFlags(args)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func sessionApproval(args []string, action string) error {
 		req.Text = strings.Join(rest[2:], " ")
 	}
 	var resp any
-	return postJSON("http://"+addr+"/sessions/"+rest[0]+"/approvals/"+rest[1], authToken, req, &resp, os.Stdout)
+	return postJSON(hubEndpoint(hubURL, "/sessions/"+rest[0]+"/approvals/"+rest[1]), authToken, req, &resp, os.Stdout)
 }
 
 func getJSON(url string, authToken string, out any, dst io.Writer) error {
@@ -232,8 +232,8 @@ func postJSON(url string, authToken string, value any, out any, dst io.Writer) e
 	return decodeAndPrint(resp.Body, out, dst)
 }
 
-func hubFlags(args []string) (addr string, authToken string, rest []string, err error) {
-	addr, rest, err = stringFlag(args, "addr", defaultAddr)
+func hubFlags(args []string) (hubURL string, authToken string, rest []string, err error) {
+	hubURL, rest, err = stringFlag(args, "hub-url", defaultHubURL)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -241,7 +241,11 @@ func hubFlags(args []string) (addr string, authToken string, rest []string, err 
 	if err != nil {
 		return "", "", nil, err
 	}
-	return addr, authToken, rest, nil
+	return hubURL, authToken, rest, nil
+}
+
+func hubEndpoint(hubURL, path string) string {
+	return strings.TrimRight(hubURL, "/") + path
 }
 
 func setBearerAuth(req *http.Request, token string) {
@@ -297,11 +301,13 @@ func intFlag(args []string, name string, defaultValue int64) (int64, []string, e
 
 func usage() error {
 	return fmt.Errorf(`usage:
-  tethon hosts list [--auth-token <token>]
-  tethon session start --host <host_id> --repo <path> --agent fake [--prompt <text>] [--auth-token <token>]
-  tethon session stream <host_id/session_id> --from 0 [--auth-token <token>]
-  tethon session input <host_id/session_id> <text> [--auth-token <token>]
-  tethon session cancel <host_id/session_id> [--auth-token <token>]
-  tethon session approve <host_id/session_id> <request_id> [--auth-token <token>]
-  tethon session deny <host_id/session_id> <request_id> [--auth-token <token>]`)
+  tethon hosts list [--hub-url <url>] [--auth-token <token>]
+  tethon session start --host <host_id> --repo <path> --agent fake [--prompt <text>] [--hub-url <url>] [--auth-token <token>]
+  tethon session stream <host_id/session_id> --from 0 [--hub-url <url>] [--auth-token <token>]
+  tethon session input <host_id/session_id> <text> [--hub-url <url>] [--auth-token <token>]
+  tethon session cancel <host_id/session_id> [--hub-url <url>] [--auth-token <token>]
+  tethon session approve <host_id/session_id> <request_id> [--hub-url <url>] [--auth-token <token>]
+  tethon session deny <host_id/session_id> <request_id> [--hub-url <url>] [--auth-token <token>]
+
+  --hub-url defaults to ` + defaultHubURL)
 }
