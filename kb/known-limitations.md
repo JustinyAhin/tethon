@@ -34,7 +34,9 @@ the target design in `kb/agent-control-design.md`.
 
 - The hub host registry is in memory. Hosts re-register via retry/backoff, but
   the hub does not persist registry/session index state across restarts yet.
-- The hub has `/healthz`; host daemon health endpoints are still planned.
+- The hub has unauthenticated `/healthz`; hostd has local `/healthz` and
+  `/status` diagnostics. These are process diagnostics, not a replacement for
+  the planned host-initiated persistent session connection.
 
 ## Host Daemon
 

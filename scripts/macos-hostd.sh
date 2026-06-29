@@ -26,6 +26,7 @@ usage:
   scripts/macos-hostd.sh restart
   scripts/macos-hostd.sh status
   scripts/macos-hostd.sh logs
+  scripts/macos-hostd.sh doctor
   scripts/macos-hostd.sh uninstall
 EOF
 }
@@ -244,6 +245,203 @@ logs_hostd() {
 	tail -n 100 -f "$stdout_log" "$stderr_log"
 }
 
+doctor_passes=0
+doctor_warnings=0
+doctor_failures=0
+
+doctor_pass() {
+	doctor_passes=$((doctor_passes + 1))
+	printf "PASS %s\n" "$1"
+}
+
+doctor_warn() {
+	doctor_warnings=$((doctor_warnings + 1))
+	printf "WARN %s\n" "$1"
+}
+
+doctor_fail() {
+	doctor_failures=$((doctor_failures + 1))
+	printf "FAIL %s\n" "$1"
+}
+
+doctor_value_from_wrapper() {
+	local flag="$1"
+	if [[ ! -f "$wrapper_path" ]]; then
+		return 1
+	fi
+	awk -v flag="$flag" '$1 == flag { print $2; exit }' "$wrapper_path"
+}
+
+doctor_http_base_for_addr() {
+	local addr="$1"
+	local host="${addr%:*}"
+	local port="${addr##*:}"
+	if [[ "$host" == "$addr" ]]; then
+		return 1
+	fi
+	if [[ -z "$host" || "$host" == "0.0.0.0" || "$host" == "::" ]]; then
+		host="127.0.0.1"
+	fi
+	printf "http://%s:%s" "$host" "$port"
+}
+
+doctor_token_present() {
+	if [[ ! -f "$config_file" ]]; then
+		return 1
+	fi
+	grep -Eq '^[[:space:]]*TETHON_HUB_AUTH_TOKEN=[^[:space:]#]+' "$config_file"
+}
+
+doctor_host_id_from_status() {
+	local status_json="$1"
+	sed -n 's/.*"host_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' <<<"$status_json" | head -n 1
+}
+
+doctor_host_online_from_hub() {
+	local hosts_json="$1"
+	local host_id="$2"
+	local compact="${hosts_json//$'\n'/}"
+	if [[ "$compact" != *"\"host_id\":\"$host_id\""* ]]; then
+		printf "missing"
+		return
+	fi
+	local tail="${compact#*"\"host_id\":\"$host_id\""}"
+	local host_entry="${tail%%\}*}"
+	if [[ "$host_entry" == *'"online":true'* ]]; then
+		printf "online"
+	else
+		printf "offline"
+	fi
+}
+
+doctor_hostd() {
+	require_macos
+
+	local addr=""
+	local hub_url=""
+	local local_base=""
+	local status_json=""
+	local host_id=""
+
+	if [[ -f "$plist_path" ]]; then
+		doctor_pass "LaunchAgent plist exists: $plist_path"
+	else
+		doctor_fail "LaunchAgent plist is missing: $plist_path"
+	fi
+
+	if [[ -x "$wrapper_path" ]]; then
+		doctor_pass "LaunchAgent wrapper exists: $wrapper_path"
+	else
+		doctor_fail "LaunchAgent wrapper is missing or not executable: $wrapper_path"
+	fi
+
+	if is_loaded; then
+		doctor_pass "launchd service is loaded: $(service_target)"
+	else
+		doctor_fail "launchd service is not loaded: $(service_target)"
+	fi
+
+	addr="$(doctor_value_from_wrapper "-addr" || true)"
+	hub_url="$(doctor_value_from_wrapper "-hub-url" || true)"
+	if [[ -n "$addr" ]]; then
+		doctor_pass "Configured hostd listener: $addr"
+		local_base="$(doctor_http_base_for_addr "$addr" || true)"
+	else
+		doctor_fail "Could not read -addr from wrapper"
+	fi
+	if [[ -n "$hub_url" ]]; then
+		doctor_pass "Configured hub URL: $hub_url"
+	else
+		doctor_fail "Could not read -hub-url from wrapper"
+	fi
+
+	local process_lines=""
+	process_lines="$(pgrep -fl "[t]ethon-hostd" 2>/dev/null || true)"
+	if [[ -z "$process_lines" ]]; then
+		doctor_warn "No tethon-hostd process found"
+	else
+		local process_count
+		process_count="$(printf "%s\n" "$process_lines" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')"
+		if [[ "$process_count" -eq 1 ]]; then
+			doctor_pass "One tethon-hostd process is running"
+		else
+			doctor_warn "Multiple tethon-hostd processes found; check for stale manual daemons"
+			printf "%s\n" "$process_lines" | sed 's/^/     /'
+		fi
+	fi
+
+	if [[ -n "$local_base" ]]; then
+		if curl -fsS --max-time 2 "$local_base/healthz" >/dev/null 2>&1; then
+			doctor_pass "Local hostd /healthz is reachable: $local_base/healthz"
+		else
+			doctor_fail "Local hostd /healthz is not reachable: $local_base/healthz"
+		fi
+		status_json="$(curl -fsS --max-time 2 "$local_base/status" 2>/dev/null || true)"
+		if [[ -n "$status_json" ]]; then
+			doctor_pass "Local hostd /status is reachable: $local_base/status"
+			host_id="$(doctor_host_id_from_status "$status_json" || true)"
+			if [[ -n "$host_id" ]]; then
+				doctor_pass "Local hostd reports host id: $host_id"
+			else
+				doctor_warn "Local hostd /status did not include host_id"
+			fi
+		else
+			doctor_warn "Local hostd /status is not reachable: $local_base/status"
+		fi
+	fi
+
+	if [[ -f "$stdout_log" || -f "$stderr_log" ]]; then
+		doctor_pass "Hostd log files exist in $log_dir"
+	else
+		doctor_warn "Hostd log files do not exist yet in $log_dir"
+	fi
+	if [[ -s "$stderr_log" ]]; then
+		doctor_warn "Recent stderr log output exists; last 10 lines:"
+		tail -n 10 "$stderr_log" | sed 's/^/     /'
+	fi
+
+	if [[ -n "$hub_url" ]]; then
+		if curl -fsS --max-time 5 "${hub_url%/}/healthz" >/dev/null 2>&1; then
+			doctor_pass "Hub /healthz is reachable: ${hub_url%/}/healthz"
+		else
+			doctor_fail "Hub /healthz is not reachable: ${hub_url%/}/healthz"
+		fi
+	fi
+
+	if doctor_token_present; then
+		doctor_pass "Hub token is present in $config_file"
+	else
+		doctor_warn "Hub token is missing or empty in $config_file"
+	fi
+
+	if [[ -n "$hub_url" && -n "$host_id" ]] && doctor_token_present; then
+		local hosts_json=""
+		hosts_json="$(set -a; source "$config_file"; set +a; curl -fsS --max-time 5 -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" "${hub_url%/}/hosts" 2>/dev/null || true)"
+		if [[ -z "$hosts_json" ]]; then
+			doctor_warn "Could not query authenticated hub /hosts"
+		else
+			local online_state
+			online_state="$(doctor_host_online_from_hub "$hosts_json" "$host_id" || true)"
+			case "$online_state" in
+			online)
+				doctor_pass "Hub reports host online: $host_id"
+				;;
+			offline)
+				doctor_fail "Hub knows host but reports it offline: $host_id"
+				;;
+			missing | "")
+				doctor_fail "Hub does not list host: $host_id"
+				;;
+			esac
+		fi
+	fi
+
+	printf "\nSummary: %d passed, %d warnings, %d failures\n" "$doctor_passes" "$doctor_warnings" "$doctor_failures"
+	if [[ "$doctor_failures" -gt 0 ]]; then
+		return 1
+	fi
+}
+
 uninstall_hostd() {
 	require_macos
 	if is_loaded; then
@@ -278,6 +476,9 @@ main() {
 	logs)
 		logs_hostd "$@"
 		;;
+	doctor)
+		doctor_hostd "$@"
+		;;
 	uninstall)
 		uninstall_hostd "$@"
 		;;
@@ -292,4 +493,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

@@ -120,6 +120,10 @@ hub for now.
    curl -fsS https://hub.tethon.dev/healthz
    ```
 
+   `/healthz` is intentionally unauthenticated and cheap. It only confirms the
+   hub process and reverse proxy path are alive; it does not fan out to hosts or
+   require the bearer token.
+
    The authenticated API should reject missing auth:
 
    ```sh

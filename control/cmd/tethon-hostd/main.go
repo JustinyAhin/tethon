@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"tethon/internal/agent"
@@ -138,9 +139,16 @@ func run() error {
 		Repos:     repoInfos(registry),
 	}
 	hub := newHubClient(*hubURL, *hubAuthToken, &http.Client{Timeout: *hubRequestTimeout})
+	status := newHostStatus(hostStatusConfig{
+		hostID:        *hostID,
+		advertisedURL: hostURL,
+		hubURL:        *hubURL,
+		repos:         registerReq.Repos,
+	})
 	go runHubConnectionLoop(ctx, hub, registerReq, hubConnectionConfig{
 		hubURL: *hubURL,
 		logger: logger,
+		status: status,
 	})
 
 	hostServer := server.NewWithConfig(store, server.Config{
@@ -154,7 +162,7 @@ func run() error {
 		logger.Error("session_recovery_failed", "error", err.Error())
 	}
 
-	srv := &http.Server{Addr: *addr, Handler: hostServer.Handler()}
+	srv := &http.Server{Addr: *addr, Handler: hostDiagnosticHandler(hostServer.Handler(), status)}
 	logger.Info("hostd_serving", "host_id", *hostID, "advertised_url", hostURL, "hub_url", *hubURL)
 	return srv.ListenAndServe()
 }
@@ -219,6 +227,173 @@ func repoInfos(registry *repo.Registry) []protocol.RepoInfo {
 	return infos
 }
 
+type hostStatusConfig struct {
+	hostID        string
+	advertisedURL string
+	hubURL        string
+	repos         []protocol.RepoInfo
+	now           func() time.Time
+}
+
+type hostStatus struct {
+	mu            sync.RWMutex
+	hostID        string
+	advertisedURL string
+	hubURL        string
+	repos         []protocol.RepoInfo
+	startedAt     time.Time
+	now           func() time.Time
+
+	registered     bool
+	retrying       bool
+	lastHubSuccess time.Time
+	lastHubFailure *hubFailure
+	nextRetryDelay time.Duration
+}
+
+type hubFailure struct {
+	at    time.Time
+	error string
+}
+
+type hostStatusResponse struct {
+	Status         string                `json:"status"`
+	HostID         string                `json:"host_id"`
+	AdvertisedURL  string                `json:"advertised_url"`
+	HubURL         string                `json:"hub_url"`
+	RepoCount      int                   `json:"repo_count"`
+	Repos          []hostStatusRepo      `json:"repos"`
+	UptimeSeconds  int64                 `json:"uptime_seconds"`
+	Registered     bool                  `json:"registered"`
+	Retrying       bool                  `json:"retrying"`
+	LastHubSuccess string                `json:"last_hub_success"`
+	LastHubFailure *hostStatusHubFailure `json:"last_hub_failure"`
+	NextRetryDelay string                `json:"next_retry_delay"`
+}
+
+type hostStatusRepo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type hostStatusHubFailure struct {
+	At    string `json:"at"`
+	Error string `json:"error"`
+}
+
+func newHostStatus(cfg hostStatusConfig) *hostStatus {
+	now := cfg.now
+	if now == nil {
+		now = time.Now
+	}
+	repos := make([]protocol.RepoInfo, len(cfg.repos))
+	copy(repos, cfg.repos)
+	return &hostStatus{
+		hostID:        cfg.hostID,
+		advertisedURL: cfg.advertisedURL,
+		hubURL:        cfg.hubURL,
+		repos:         repos,
+		startedAt:     now().UTC(),
+		now:           now,
+	}
+}
+
+func (s *hostStatus) recordHubSuccess() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registered = true
+	s.retrying = false
+	s.lastHubSuccess = s.now().UTC()
+	s.nextRetryDelay = 0
+}
+
+func (s *hostStatus) recordHubFailure(err error, nextRetryDelay time.Duration, registered bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registered = registered
+	s.retrying = true
+	s.lastHubFailure = &hubFailure{at: s.now().UTC(), error: err.Error()}
+	s.nextRetryDelay = nextRetryDelay
+}
+
+func (s *hostStatus) recordHubForgotHost() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.registered = false
+	s.retrying = true
+	s.nextRetryDelay = 0
+}
+
+func (s *hostStatus) snapshot() hostStatusResponse {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := s.now().UTC()
+	repos := make([]hostStatusRepo, 0, len(s.repos))
+	for _, repo := range s.repos {
+		repos = append(repos, hostStatusRepo{ID: repo.ID, Name: repo.Name})
+	}
+	resp := hostStatusResponse{
+		Status:         "ok",
+		HostID:         s.hostID,
+		AdvertisedURL:  s.advertisedURL,
+		HubURL:         s.hubURL,
+		RepoCount:      len(s.repos),
+		Repos:          repos,
+		UptimeSeconds:  int64(now.Sub(s.startedAt).Seconds()),
+		Registered:     s.registered,
+		Retrying:       s.retrying,
+		NextRetryDelay: durationString(s.nextRetryDelay),
+	}
+	if !s.lastHubSuccess.IsZero() {
+		resp.LastHubSuccess = s.lastHubSuccess.Format(time.RFC3339)
+	}
+	if s.lastHubFailure != nil {
+		resp.LastHubFailure = &hostStatusHubFailure{
+			At:    s.lastHubFailure.at.Format(time.RFC3339),
+			Error: s.lastHubFailure.error,
+		}
+	}
+	return resp
+}
+
+func durationString(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	return d.String()
+}
+
+func hostDiagnosticHandler(next http.Handler, status *hostStatus) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/healthz" && r.Method == http.MethodGet:
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		case r.URL.Path == "/status" && r.Method == http.MethodGet:
+			writeJSON(w, http.StatusOK, status.snapshot())
+		case r.URL.Path == "/healthz" || r.URL.Path == "/status":
+			writeJSON(w, http.StatusMethodNotAllowed, protocol.ErrorResponse{Error: "method not allowed"})
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
 type hostHub interface {
 	registerHost(context.Context, protocol.RegisterHostRequest) error
 	heartbeat(context.Context, string) error
@@ -231,6 +406,7 @@ type hubConnectionConfig struct {
 	jitter            func(time.Duration) time.Duration
 	hubURL            string
 	logger            *slog.Logger
+	status            *hostStatus
 }
 
 func (c hubConnectionConfig) withDefaults() hubConnectionConfig {
@@ -257,6 +433,14 @@ func (c hubConnectionConfig) withDefaults() hubConnectionConfig {
 
 func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.RegisterHostRequest, cfg hubConnectionConfig) {
 	cfg = cfg.withDefaults()
+	if cfg.status == nil {
+		cfg.status = newHostStatus(hostStatusConfig{
+			hostID:        req.HostID,
+			advertisedURL: req.URL,
+			hubURL:        cfg.hubURL,
+			repos:         req.Repos,
+		})
+	}
 	registered := false
 	registrationFailures := 0
 	heartbeatFailures := 0
@@ -278,6 +462,7 @@ func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.Registe
 		}
 
 		if err == nil {
+			cfg.status.recordHubSuccess()
 			if !registered {
 				cfg.logger.Info(
 					"host_registered",
@@ -305,6 +490,7 @@ func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.Registe
 
 		if registered && isHTTPStatus(err, http.StatusNotFound) {
 			cfg.logger.Warn("hub_forgot_host", hubLogAttrs(cfg, req)...)
+			cfg.status.recordHubForgotHost()
 			registered = false
 			heartbeatFailures = 0
 			retryDelay = cfg.minBackoff
@@ -315,6 +501,7 @@ func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.Registe
 		delay := retryDelay + cfg.jitter(retryDelay)
 		if registered {
 			heartbeatFailures++
+			cfg.status.recordHubFailure(err, delay, true)
 			cfg.logger.Warn(
 				"hub_heartbeat_failed",
 				append(hubLogAttrs(cfg, req),
@@ -325,6 +512,7 @@ func runHubConnectionLoop(ctx context.Context, hub hostHub, req protocol.Registe
 			)
 		} else {
 			registrationFailures++
+			cfg.status.recordHubFailure(err, delay, false)
 			cfg.logger.Warn(
 				"host_registration_failed",
 				append(hubLogAttrs(cfg, req),

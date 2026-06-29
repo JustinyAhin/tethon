@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,101 @@ import (
 	"tethon/internal/protocol"
 	"tethon/internal/repo"
 )
+
+func TestHostDiagnosticHealthAndStatus(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	status := newHostStatus(hostStatusConfig{
+		hostID:        "mac",
+		advertisedURL: "http://100.64.0.10:39181",
+		hubURL:        "https://hub.tethon.dev",
+		now:           func() time.Time { return now },
+		repos: []protocol.RepoInfo{
+			{ID: "alpha", Name: "alpha", Path: "/secret/path/alpha"},
+			{ID: "beta", Name: "beta", Path: "/secret/path/beta"},
+		},
+	})
+	now = now.Add(3 * time.Second)
+	status.recordHubSuccess()
+	now = now.Add(2 * time.Second)
+	ts := httptest.NewServer(hostDiagnosticHandler(http.NotFoundHandler(), status))
+	t.Cleanup(ts.Close)
+
+	var health map[string]string
+	getJSON(t, ts.URL+"/healthz", &health)
+	if health["status"] != "ok" {
+		t.Fatalf("health status = %q, want ok", health["status"])
+	}
+
+	var out hostStatusResponse
+	getJSON(t, ts.URL+"/status", &out)
+	if out.Status != "ok" || out.HostID != "mac" || out.AdvertisedURL != "http://100.64.0.10:39181" || out.HubURL != "https://hub.tethon.dev" {
+		t.Fatalf("unexpected status response: %+v", out)
+	}
+	if out.RepoCount != 2 || len(out.Repos) != 2 || out.Repos[0].ID != "alpha" || out.Repos[0].Name != "alpha" {
+		t.Fatalf("unexpected repo summary: %+v", out)
+	}
+	if out.UptimeSeconds != 5 {
+		t.Fatalf("uptime = %d, want 5", out.UptimeSeconds)
+	}
+	if !out.Registered || out.Retrying || out.LastHubSuccess != "2026-06-29T12:00:03Z" || out.LastHubFailure != nil || out.NextRetryDelay != "" {
+		t.Fatalf("unexpected hub state: %+v", out)
+	}
+	raw := getBody(t, ts.URL+"/status")
+	if strings.Contains(raw, "/secret/path") || strings.Contains(raw, "Bearer") || strings.Contains(raw, "Authorization") {
+		t.Fatalf("status leaked sensitive data: %s", raw)
+	}
+}
+
+func TestHostDiagnosticStatusTracksHubFailure(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	status := newHostStatus(hostStatusConfig{
+		hostID:        "mac",
+		advertisedURL: "http://100.64.0.10:39181",
+		hubURL:        "https://hub.tethon.dev",
+		now:           func() time.Time { return now },
+	})
+	status.recordHubFailure(errors.New("network down"), 5*time.Second, false)
+	ts := httptest.NewServer(hostDiagnosticHandler(http.NotFoundHandler(), status))
+	t.Cleanup(ts.Close)
+
+	var out hostStatusResponse
+	getJSON(t, ts.URL+"/status", &out)
+	if out.Registered || !out.Retrying || out.NextRetryDelay != "5s" {
+		t.Fatalf("unexpected retry state: %+v", out)
+	}
+	if out.LastHubFailure == nil || out.LastHubFailure.At != "2026-06-29T12:00:00Z" || out.LastHubFailure.Error != "network down" {
+		t.Fatalf("unexpected failure state: %+v", out.LastHubFailure)
+	}
+}
+
+func TestHostDiagnosticStatusUpdatesFromHubConnectionLoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub := newFakeHub()
+	hub.heartbeatErrs = []error{errors.New("temporary network failure")}
+	status := newHostStatus(hostStatusConfig{hostID: "mac", advertisedURL: "http://127.0.0.1:39181", hubURL: "https://hub.tethon.dev"})
+	cfg := testHubConnectionConfig()
+	cfg.status = status
+
+	go runHubConnectionLoop(ctx, hub, testRegisterRequest(), cfg)
+
+	for _, want := range []string{"register", "heartbeat"} {
+		if got := hub.waitCall(t); got != want {
+			t.Fatalf("call = %q, want %q", got, want)
+		}
+	}
+	failed := status.snapshot()
+	if !failed.Registered || !failed.Retrying || failed.NextRetryDelay != "1ms" || failed.LastHubFailure == nil {
+		t.Fatalf("unexpected failed status: %+v", failed)
+	}
+	if got := hub.waitCall(t); got != "heartbeat" {
+		t.Fatalf("call = %q, want heartbeat", got)
+	}
+	recovered := status.snapshot()
+	if !recovered.Registered || recovered.Retrying || recovered.NextRetryDelay != "" || recovered.LastHubSuccess == "" {
+		t.Fatalf("unexpected recovered status: %+v", recovered)
+	}
+}
 
 func TestDefaultDBPath(t *testing.T) {
 	got := defaultDBPath()
@@ -305,6 +402,38 @@ func TestIsHTTPStatus(t *testing.T) {
 	if isHTTPStatus(errors.New("network"), http.StatusNotFound) {
 		t.Fatal("did not expect plain error status match")
 	}
+}
+
+func getJSON(t *testing.T, target string, out any) {
+	t.Helper()
+	resp, err := http.Get(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s returned %s", target, resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func getBody(t *testing.T, target string) string {
+	t.Helper()
+	resp, err := http.Get(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s returned %s: %s", target, resp.Status, body)
+	}
+	return string(body)
 }
 
 type fakeHub struct {

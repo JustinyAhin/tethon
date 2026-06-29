@@ -29,6 +29,7 @@ Implemented now:
 - Go hub, host daemon, and CLI under `control/`
 - SQLite-backed append-only session/event log with cursor replay
 - host registration, heartbeat, host/session relay, and bearer-token auth
+- hub `/healthz`, hostd `/healthz` and `/status`, plus a macOS hostd doctor
 - `claude-cli` adapter using the local Claude Code CLI and subscription auth
 - per-session git worktrees with cleanup guardrails and shared build/dependency caches
 - SvelteKit web UI for hosts, session creation, session list/detail, structured stream, input, approvals, and basic usage display

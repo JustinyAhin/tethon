@@ -90,6 +90,29 @@ Useful hostd log events:
 - `hostd_serving`: confirms the advertised URL that the hub will call for
   session operations.
 
+Run the local doctor:
+
+```sh
+scripts/macos-hostd.sh doctor
+```
+
+The doctor prints `PASS`, `WARN`, and `FAIL` checks for launchd state, the
+configured listener, stale manual `tethon-hostd` processes, recent logs, local
+hostd `/healthz` and `/status`, hub `/healthz`, token presence, and whether the
+host appears online through authenticated hub `/hosts` when a token is present.
+It does not print token values.
+
+The host daemon also exposes local diagnostics on its configured listener:
+
+```sh
+curl -fsS http://<mac-tailscale-ip>:39181/healthz
+curl -fsS http://<mac-tailscale-ip>:39181/status
+```
+
+`/status` includes the host id, advertised URL, hub URL, registered repo names,
+uptime, last hub success/failure, and retry state. It does not include bearer
+tokens or environment file contents.
+
 Restart after changing config or reinstalling:
 
 ```sh
@@ -119,6 +142,7 @@ go run ./cmd/tethon hosts list --hub-url https://hub.tethon.dev
 
 The installed Mac should appear with `online: true`. If it does not, check:
 
+- `scripts/macos-hostd.sh doctor`
 - `scripts/macos-hostd.sh logs`
 - the token in `~/.config/tethon/hostd.env`
 - that the hub can reach `http://<mac-tailscale-ip>:39181`
