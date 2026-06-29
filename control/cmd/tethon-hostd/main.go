@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -54,7 +55,7 @@ func run() error {
 	addr := flag.String("addr", "127.0.0.1:39181", "listen address")
 	hubURL := flag.String("hub-url", "http://127.0.0.1:39180", "hub URL")
 	hubAuthToken := flag.String("hub-auth-token", os.Getenv("TETHON_HUB_AUTH_TOKEN"), "bearer token for hub requests")
-	dbPath := flag.String("db", "./hostd.db", "sqlite database path")
+	dbPath := flag.String("db", defaultDBPath(), "sqlite database path")
 	hostID := flag.String("host-id", sanitizeHostID(hostname), "host id")
 	name := flag.String("name", hostname, "host display name")
 	allowAnthropicAPIKey := flag.Bool("allow-anthropic-api-key", false, "allow claude-cli sessions while ANTHROPIC_API_KEY is set")
@@ -82,6 +83,9 @@ func run() error {
 	if wtRoot, err = filepath.Abs(wtRoot); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(wtRoot, 0o755); err != nil {
+		return err
+	}
 	worktrees := worktree.NewManager(wtRoot)
 
 	cRoot := *cacheRoot
@@ -96,6 +100,9 @@ func run() error {
 	}
 	logger := slog.Default()
 
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
+		return err
+	}
 	store, err := sessionlog.Open(ctx, *dbPath)
 	if err != nil {
 		return err
@@ -109,7 +116,7 @@ func run() error {
 			ExtraEnv:             cacheEnv(cRoot),
 		}))
 	}
-	log.Printf("hostd %s using worktree root %s and shared cache root %s", *hostID, wtRoot, cRoot)
+	log.Printf("hostd %s using db %s, worktree root %s, and shared cache root %s", *hostID, *dbPath, wtRoot, cRoot)
 
 	hostURL := "http://" + *addr
 	registerReq := protocol.RegisterHostRequest{
@@ -139,6 +146,38 @@ func run() error {
 	srv := &http.Server{Addr: *addr, Handler: hostServer.Handler()}
 	log.Printf("hostd %s serving on %s and registering with %s", *hostID, hostURL, *hubURL)
 	return srv.ListenAndServe()
+}
+
+// defaultDBPath returns the default sqlite path inside the per-user app-data
+// directory so hostd state does not depend on the process working directory.
+// It falls back to ./hostd.db if the app-data dir cannot be resolved.
+func defaultDBPath() string {
+	dir, err := defaultStateDir()
+	if err != nil {
+		return "./hostd.db"
+	}
+	return filepath.Join(dir, "hostd.db")
+}
+
+// defaultStateDir resolves the per-user app-data directory for tethon:
+// macOS ~/Library/Application Support/tethon, Linux $XDG_DATA_HOME/tethon
+// (or ~/.local/share/tethon).
+func defaultStateDir() (string, error) {
+	if runtime.GOOS == "darwin" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, "tethon"), nil
+	}
+	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+		return filepath.Join(xdg, "tethon"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share", "tethon"), nil
 }
 
 // cacheEnv builds the shared build/dependency cache environment for agent

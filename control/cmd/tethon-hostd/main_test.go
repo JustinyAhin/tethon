@@ -3,11 +3,37 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"tethon/internal/repo"
 )
+
+func TestDefaultDBPath(t *testing.T) {
+	got := defaultDBPath()
+	if filepath.Base(got) != "hostd.db" {
+		t.Fatalf("defaultDBPath() = %q, want filename hostd.db", got)
+	}
+	if filepath.Base(filepath.Dir(got)) != "tethon" {
+		t.Fatalf("defaultDBPath() = %q, want parent dir tethon", got)
+	}
+}
+
+func TestDefaultStateDirXDG(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("XDG_DATA_HOME is not consulted on macOS")
+	}
+	t.Setenv("XDG_DATA_HOME", "/custom/data")
+	got, err := defaultStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/custom/data/tethon"; got != want {
+		t.Fatalf("defaultStateDir() = %q, want %q", got, want)
+	}
+}
 
 func TestCacheEnv(t *testing.T) {
 	env := cacheEnv("/state/cache")
