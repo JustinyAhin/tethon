@@ -18,12 +18,11 @@
 		}
 	);
 
-	watch(
-		() => createSession.result,
-		(result) => {
-			if (result?.ok) goto(`/sessions/${result.id}`);
-		}
-	);
+	createSession.enhance(async (form) => {
+		await form.submit();
+		const result = form.result;
+		if (result?.ok) await goto(`/sessions/${result.id}`);
+	});
 
 	const hostList = $derived(hosts.current?.ok ? hosts.current.hosts : []);
 	const hostError = $derived(
