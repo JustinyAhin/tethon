@@ -41,6 +41,9 @@
 		"wrangler": "^4.97.0"
 	},
 	"dependencies": {
+		"@astrojs/markdown-satteri": "^0.3.2",
+		"@bruits/satteri-wasm32-wasi": "0.9.3",
+		"@napi-rs/wasm-runtime": "^1.1.6",
 		"jose": "^6.2.3",
 		"openapi-fetch": "^0.17.0",
 		"runed": "^0.37.1",

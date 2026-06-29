@@ -4,6 +4,7 @@
 	import { PersistedState } from 'runed';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import MarkdownOutput from '$lib/components/markdown-output.svelte';
 	import {
 		sendInput,
 		resolveApproval,
@@ -303,8 +304,8 @@
 					</dl>
 				</div>
 			{:else if event.type === 'output'}
-				<div class="rounded-lg border border-gray-200 p-3 text-sm whitespace-pre-wrap">
-					{(event.payload as OutputPayload).text}
+				<div class="rounded-lg border border-gray-200 p-3">
+					<MarkdownOutput source={(event.payload as OutputPayload).text} />
 				</div>
 			{:else if event.type === 'input_received'}
 				<div
