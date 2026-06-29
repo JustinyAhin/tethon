@@ -1,0 +1,949 @@
+{
+	"components": {
+		"schemas": {
+			"ActionEventsResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"events": {
+						"items": {
+							"$ref": "#/components/schemas/Event"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": ["events"],
+				"type": "object"
+			},
+			"CreateSessionRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"agent": {
+						"type": "string"
+					},
+					"base_ref": {
+						"type": "string"
+					},
+					"branch": {
+						"type": "string"
+					},
+					"cwd": {
+						"type": "string"
+					},
+					"host_id": {
+						"type": "string"
+					},
+					"prompt": {
+						"type": "string"
+					},
+					"repo": {
+						"type": "string"
+					},
+					"repo_id": {
+						"type": "string"
+					}
+				},
+				"required": ["cwd", "branch", "agent"],
+				"type": "object"
+			},
+			"CreateSessionResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["id", "status"],
+				"type": "object"
+			},
+			"Event": {
+				"additionalProperties": false,
+				"properties": {
+					"created_at": {
+						"format": "date-time",
+						"type": "string"
+					},
+					"payload": {},
+					"seq": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"session_id": {
+						"type": "string"
+					},
+					"type": {
+						"type": "string"
+					}
+				},
+				"required": ["session_id", "seq", "type", "created_at", "payload"],
+				"type": "object"
+			},
+			"HostSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"agents": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					},
+					"host_id": {
+						"type": "string"
+					},
+					"last_seen": {
+						"format": "date-time",
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"online": {
+						"type": "boolean"
+					},
+					"repo_roots": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					},
+					"repos": {
+						"items": {
+							"$ref": "#/components/schemas/RepoInfo"
+						},
+						"type": ["array", "null"]
+					},
+					"url": {
+						"type": "string"
+					}
+				},
+				"required": ["host_id", "name", "url", "agents", "repo_roots", "last_seen", "online"],
+				"type": "object"
+			},
+			"HubStatusError": {
+				"additionalProperties": false,
+				"properties": {
+					"error": {
+						"type": "string"
+					}
+				},
+				"required": ["error"],
+				"type": "object"
+			},
+			"InputRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"text": {
+						"type": "string"
+					}
+				},
+				"required": ["text"],
+				"type": "object"
+			},
+			"ListHostsResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"hosts": {
+						"items": {
+							"$ref": "#/components/schemas/HostSummary"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": ["hosts"],
+				"type": "object"
+			},
+			"ListSessionsResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"sessions": {
+						"items": {
+							"$ref": "#/components/schemas/SessionSummary"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": ["sessions"],
+				"type": "object"
+			},
+			"RegisterHostRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"agents": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					},
+					"host_id": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"repo_roots": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					},
+					"repos": {
+						"items": {
+							"$ref": "#/components/schemas/RepoInfo"
+						},
+						"type": ["array", "null"]
+					},
+					"url": {
+						"type": "string"
+					}
+				},
+				"required": ["host_id", "name", "url", "agents", "repo_roots"],
+				"type": "object"
+			},
+			"RepoInfo": {
+				"additionalProperties": false,
+				"properties": {
+					"default_branch": {
+						"type": "string"
+					},
+					"id": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"path": {
+						"type": "string"
+					}
+				},
+				"required": ["id", "name", "path"],
+				"type": "object"
+			},
+			"ResolveApprovalRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"action": {
+						"type": "string"
+					},
+					"text": {
+						"type": "string"
+					}
+				},
+				"required": ["action"],
+				"type": "object"
+			},
+			"SessionSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"agent": {
+						"type": "string"
+					},
+					"backend": {
+						"type": "string"
+					},
+					"base_ref": {
+						"type": "string"
+					},
+					"branch": {
+						"type": "string"
+					},
+					"cli": {
+						"type": "string"
+					},
+					"created_at": {
+						"format": "date-time",
+						"type": "string"
+					},
+					"cwd": {
+						"type": "string"
+					},
+					"host_id": {
+						"type": "string"
+					},
+					"id": {
+						"type": "string"
+					},
+					"last_seq": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"model": {
+						"type": "string"
+					},
+					"repo": {
+						"type": "string"
+					},
+					"repo_id": {
+						"type": "string"
+					},
+					"status": {
+						"type": "string"
+					},
+					"updated_at": {
+						"format": "date-time",
+						"type": "string"
+					}
+				},
+				"required": [
+					"id",
+					"repo",
+					"cwd",
+					"branch",
+					"agent",
+					"status",
+					"created_at",
+					"updated_at",
+					"last_seq"
+				],
+				"type": "object"
+			}
+		}
+	},
+	"info": {
+		"title": "Tethon Hub API",
+		"version": "0.1.0"
+	},
+	"openapi": "3.1.0",
+	"paths": {
+		"/hosts": {
+			"get": {
+				"operationId": "listHosts",
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ListHostsResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"405": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Method Not Allowed"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					}
+				},
+				"summary": "List registered hosts",
+				"tags": ["hosts"]
+			}
+		},
+		"/hosts/register": {
+			"post": {
+				"operationId": "registerHost",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/RegisterHostRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"201": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HostSummary"
+								}
+							}
+						},
+						"description": "Created"
+					},
+					"400": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Request"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					}
+				},
+				"summary": "Register or refresh a host",
+				"tags": ["hosts"]
+			}
+		},
+		"/hosts/{host_id}/heartbeat": {
+			"post": {
+				"operationId": "heartbeatHost",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HostSummary"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					}
+				},
+				"summary": "Refresh a host heartbeat",
+				"tags": ["hosts"]
+			}
+		},
+		"/sessions": {
+			"get": {
+				"operationId": "listSessions",
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ListSessionsResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					}
+				},
+				"summary": "List sessions across online hosts",
+				"tags": ["sessions"]
+			},
+			"post": {
+				"operationId": "createSession",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/CreateSessionRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"201": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CreateSessionResponse"
+								}
+							}
+						},
+						"description": "Created"
+					},
+					"400": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Request"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Create a session on a host",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/approvals/{request_id}": {
+			"post": {
+				"operationId": "resolveSessionApproval",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "request_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/ResolveApprovalRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Resolve a pending approval",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/cancel": {
+			"post": {
+				"operationId": "cancelSession",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Cancel an active session",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/input": {
+			"post": {
+				"operationId": "sendSessionInput",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/InputRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Send input to a session",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/stream": {
+			"get": {
+				"operationId": "streamSession",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"explode": false,
+						"in": "query",
+						"name": "from",
+						"schema": {
+							"default": 0,
+							"format": "int64",
+							"minimum": 0,
+							"type": "integer"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"text/event-stream": {
+								"schema": {
+									"additionalProperties": false,
+									"properties": {
+										"created_at": {
+											"format": "date-time",
+											"type": "string"
+										},
+										"payload": {},
+										"seq": {
+											"format": "int64",
+											"type": "integer"
+										},
+										"session_id": {
+											"type": "string"
+										},
+										"type": {
+											"type": "string"
+										}
+									},
+									"required": ["session_id", "seq", "type", "created_at", "payload"],
+									"type": "object"
+								}
+							}
+						},
+						"description": "Server-sent events. Each data frame contains a protocol Event."
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Stream session events from a cursor",
+				"tags": ["sessions"]
+			}
+		}
+	}
+}

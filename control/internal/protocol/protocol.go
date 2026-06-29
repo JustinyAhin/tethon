@@ -63,6 +63,10 @@ type ListSessionsResponse struct {
 	Sessions []SessionSummary `json:"sessions"`
 }
 
+type ListHostsResponse struct {
+	Hosts []HostSummary `json:"hosts"`
+}
+
 type CreateSessionRequest struct {
 	HostID  string `json:"host_id,omitempty"`
 	RepoID  string `json:"repo_id,omitempty"`
@@ -116,6 +120,14 @@ type InputRequest struct {
 type ResolveApprovalRequest struct {
 	Action string `json:"action"`
 	Text   string `json:"text,omitempty"`
+}
+
+type ActionEventsResponse struct {
+	Events []Event `json:"events"`
+}
+
+type ErrorResponse struct {
+	Error string `json:"error"`
 }
 
 type OutputPayload struct {

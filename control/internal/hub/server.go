@@ -46,12 +46,7 @@ func New(hostTimeout time.Duration) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/hosts", s.handleHosts)
-	mux.HandleFunc("/hosts/", s.handleHost)
-	mux.HandleFunc("/sessions", s.handleSessions)
-	mux.HandleFunc("/sessions/", s.handleSession)
-	return mux
+	return s.humaHandler()
 }
 
 func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +120,7 @@ func (s *Server) handleListHosts(w http.ResponseWriter, _ *http.Request) {
 	for _, hostID := range hostIDs {
 		summaries = append(summaries, s.summary(hostID))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hosts": summaries})
+	writeJSON(w, http.StatusOK, protocol.ListHostsResponse{Hosts: summaries})
 }
 
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -409,7 +404,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	writeJSON(w, status, protocol.ErrorResponse{Error: message})
 }
 
 func (r hostRecord) String() string {

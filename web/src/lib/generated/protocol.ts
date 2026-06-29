@@ -54,6 +54,9 @@ export interface SessionSummary {
 export interface ListSessionsResponse {
 	sessions: SessionSummary[];
 }
+export interface ListHostsResponse {
+	hosts: HostSummary[];
+}
 export interface CreateSessionRequest {
 	host_id?: string;
 	repo_id?: string;
@@ -102,6 +105,12 @@ export interface InputRequest {
 export interface ResolveApprovalRequest {
 	action: string;
 	text?: string;
+}
+export interface ActionEventsResponse {
+	events: Event[];
+}
+export interface ErrorResponse {
+	error: string;
 }
 export interface OutputPayload {
 	text: string;

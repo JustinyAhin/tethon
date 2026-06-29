@@ -1,15 +1,25 @@
 import { command, form, query } from '$app/server';
 import { error } from '@sveltejs/kit';
 import * as v from 'valibot';
-import type { CreateSessionResponse, SessionEvent, SessionSummary } from '$lib/types';
-import { hubBase, hubErrorMessage } from './hub';
+import type { SessionSummary } from '$lib/types';
+import {
+	HubAPIError,
+	createSession as createHubSession,
+	listSessions,
+	resolveApproval as resolveHubApproval,
+	sendInput as sendHubInput,
+	streamSessionEvents,
+	type CreateSessionRequest
+} from '$lib/server/hub-client';
+import { hubBase } from './hub';
 
 const getSessions = query(async (): Promise<SessionSummary[]> => {
-	const base = hubBase();
-	const res = await fetch(`${base}/sessions`);
-	if (!res.ok) error(res.status, await hubErrorMessage(res));
-	const data = (await res.json()) as { sessions?: SessionSummary[] };
-	return data.sessions ?? [];
+	try {
+		return await listSessions({ baseUrl: hubBase() });
+	} catch (err) {
+		if (err instanceof HubAPIError) error(err.status, err.message);
+		throw err;
+	}
 });
 
 const optionalText = v.optional(v.pipe(v.string(), v.trim()), '');
@@ -34,64 +44,40 @@ const CreateSessionSchema = v.pipe(
 type CreateResult = { ok: true; id: string; status: string } | { ok: false; error: string };
 
 const createSession = form(CreateSessionSchema, async (data): Promise<CreateResult> => {
-	const base = hubBase();
-
-	const body: Record<string, string> = { host_id: data.host_id };
+	const body: CreateSessionRequest = {
+		host_id: data.host_id,
+		cwd: data.cwd,
+		branch: data.branch,
+		agent: data.agent
+	};
 	if (data.repo_id) body.repo_id = data.repo_id;
 	else if (data.repo) body.repo = data.repo;
-	for (const k of ['cwd', 'branch', 'base_ref', 'agent', 'prompt'] as const) {
-		if (data[k]) body[k] = data[k];
+	if (data.base_ref) body.base_ref = data.base_ref;
+	if (data.prompt) body.prompt = data.prompt;
+
+	try {
+		const out = await createHubSession({ baseUrl: hubBase(), body });
+		return { ok: true, id: out.id, status: out.status };
+	} catch (err) {
+		if (err instanceof HubAPIError) return { ok: false, error: err.message };
+		throw err;
 	}
-
-	const res = await fetch(`${base}/sessions`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-	if (!res.ok) return { ok: false, error: await hubErrorMessage(res) };
-
-	const out = (await res.json()) as CreateSessionResponse;
-	return { ok: true, id: out.id, status: out.status };
 });
 
-const parseFrame = (frame: string): SessionEvent | null => {
-	for (const line of frame.split('\n')) {
-		if (line.startsWith('data:')) {
-			try {
-				return JSON.parse(line.slice(5).trimStart()) as SessionEvent;
-			} catch {
-				return null;
-			}
-		}
-	}
-	return null;
-};
-
 const streamSession = query.live(v.string(), async function* (id) {
-	const base = hubBase();
 	const controller = new AbortController();
 	try {
-		const res = await fetch(`${base}/sessions/${id}/stream?from=0`, {
-			signal: controller.signal,
-			headers: { accept: 'text/event-stream' }
-		});
-		if (!res.ok || !res.body) error(res.status, await hubErrorMessage(res));
-
-		const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-		let buffer = '';
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			buffer += value;
-			let sep: number;
-			while ((sep = buffer.indexOf('\n\n')) !== -1) {
-				const event = parseFrame(buffer.slice(0, sep));
-				buffer = buffer.slice(sep + 2);
-				if (!event) continue;
-				yield event;
-				if (event.type === 'done') return;
-			}
+		for await (const event of streamSessionEvents({
+			baseUrl: hubBase(),
+			id,
+			signal: controller.signal
+		})) {
+			yield event;
+			if (event.type === 'done') return;
 		}
+	} catch (err) {
+		if (err instanceof HubAPIError) error(err.status, err.message);
+		throw err;
 	} finally {
 		controller.abort();
 	}
@@ -105,14 +91,13 @@ const SendInputSchema = v.object({
 type SendResult = { ok: true } | { ok: false; error: string };
 
 const sendInput = command(SendInputSchema, async ({ id, text }): Promise<SendResult> => {
-	const base = hubBase();
-	const res = await fetch(`${base}/sessions/${id}/input`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ text })
-	});
-	if (!res.ok) return { ok: false, error: await hubErrorMessage(res) };
-	return { ok: true };
+	try {
+		await sendHubInput({ baseUrl: hubBase(), id, text });
+		return { ok: true };
+	} catch (err) {
+		if (err instanceof HubAPIError) return { ok: false, error: err.message };
+		throw err;
+	}
 });
 
 const ResolveApprovalSchema = v.pipe(
@@ -131,16 +116,15 @@ const ResolveApprovalSchema = v.pipe(
 const resolveApproval = command(
 	ResolveApprovalSchema,
 	async ({ id, request_id, action, text }): Promise<SendResult> => {
-		const base = hubBase();
 		const body: { action: string; text?: string } = { action };
 		if (action === 'reply') body.text = text;
-		const res = await fetch(`${base}/sessions/${id}/approvals/${request_id}`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(body)
-		});
-		if (!res.ok) return { ok: false, error: await hubErrorMessage(res) };
-		return { ok: true };
+		try {
+			await resolveHubApproval({ baseUrl: hubBase(), id, requestID: request_id, body });
+			return { ok: true };
+		} catch (err) {
+			if (err instanceof HubAPIError) return { ok: false, error: err.message };
+			throw err;
+		}
 	}
 );
 
