@@ -25,10 +25,6 @@
 	let events = $state<SessionEvent[]>(persisted.current);
 	const seen = new SvelteSet<number>(events.map((e) => e.seq));
 
-	$effect(() => {
-		persisted.current = [...events];
-	});
-
 	let connected = $state(false);
 	let done = $state(events.some((e) => e.type === 'done'));
 	let streamError = $state('');
@@ -91,6 +87,7 @@
 				const { done: chunkDone, value } = await reader.read();
 				if (chunkDone) break;
 				buffer += value;
+				let added = false;
 				let sep: number;
 				while ((sep = buffer.indexOf('\n\n')) !== -1) {
 					const ev = parseEvent(buffer.slice(0, sep));
@@ -98,8 +95,12 @@
 					if (!ev || seen.has(ev.seq)) continue;
 					seen.add(ev.seq);
 					events.push(ev);
+					added = true;
 					if (ev.type === 'done') done = true;
 				}
+				// Persist outside any reactive effect to avoid a self-invalidating
+				// update loop (writing PersistedState inside $effect re-triggers it).
+				if (added) persisted.current = events.slice();
 			}
 		} catch (err) {
 			if (ac.signal.aborted) return;
