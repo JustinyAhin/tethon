@@ -159,25 +159,25 @@ func defaultDBPath() string {
 	return filepath.Join(dir, "hostd.db")
 }
 
-// defaultStateDir resolves the per-user app-data directory for tethon:
-// macOS ~/Library/Application Support/tethon, Linux $XDG_DATA_HOME/tethon
-// (or ~/.local/share/tethon).
+// defaultStateDir resolves the per-user app-data directory for hostd:
+// macOS ~/Library/Application Support/Tethon/hostd, Linux
+// $XDG_DATA_HOME/tethon/hostd (or ~/.local/share/tethon/hostd).
 func defaultStateDir() (string, error) {
-	if runtime.GOOS == "darwin" {
-		dir, err := os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(dir, "tethon"), nil
-	}
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "tethon"), nil
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "share", "tethon"), nil
+	return defaultStateDirFor(runtime.GOOS, home, os.Getenv("XDG_DATA_HOME")), nil
+}
+
+func defaultStateDirFor(goos, home, xdgDataHome string) string {
+	if goos == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "Tethon", "hostd")
+	}
+	if xdgDataHome != "" {
+		return filepath.Join(xdgDataHome, "tethon", "hostd")
+	}
+	return filepath.Join(home, ".local", "share", "tethon", "hostd")
 }
 
 // cacheEnv builds the shared build/dependency cache environment for agent

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -16,22 +15,32 @@ func TestDefaultDBPath(t *testing.T) {
 	if filepath.Base(got) != "hostd.db" {
 		t.Fatalf("defaultDBPath() = %q, want filename hostd.db", got)
 	}
-	if filepath.Base(filepath.Dir(got)) != "tethon" {
-		t.Fatalf("defaultDBPath() = %q, want parent dir tethon", got)
+	if filepath.Base(filepath.Dir(got)) != "hostd" {
+		t.Fatalf("defaultDBPath() = %q, want parent dir hostd", got)
 	}
 }
 
-func TestDefaultStateDirXDG(t *testing.T) {
-	if runtime.GOOS == "darwin" {
-		t.Skip("XDG_DATA_HOME is not consulted on macOS")
+func TestDefaultStateDirForDarwin(t *testing.T) {
+	got := defaultStateDirFor("darwin", "/Users/alice", "/custom/data")
+	want := filepath.Join("/Users/alice", "Library", "Application Support", "Tethon", "hostd")
+	if got != want {
+		t.Fatalf("defaultStateDirFor(darwin) = %q, want %q", got, want)
 	}
-	t.Setenv("XDG_DATA_HOME", "/custom/data")
-	got, err := defaultStateDir()
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestDefaultStateDirForXDG(t *testing.T) {
+	got := defaultStateDirFor("linux", "/home/alice", "/custom/data")
+	want := filepath.Join("/custom/data", "tethon", "hostd")
+	if got != want {
+		t.Fatalf("defaultStateDirFor(linux) = %q, want %q", got, want)
 	}
-	if want := "/custom/data/tethon"; got != want {
-		t.Fatalf("defaultStateDir() = %q, want %q", got, want)
+}
+
+func TestDefaultStateDirForLocalShare(t *testing.T) {
+	got := defaultStateDirFor("linux", "/home/alice", "")
+	want := filepath.Join("/home/alice", ".local", "share", "tethon", "hostd")
+	if got != want {
+		t.Fatalf("defaultStateDirFor(linux) = %q, want %q", got, want)
 	}
 }
 

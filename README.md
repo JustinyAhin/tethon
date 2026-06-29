@@ -29,3 +29,4 @@ Early. `control/` holds the first piece: a Go implementation of the session prot
 - `control/` — Go session-protocol prototype
 - `kb/` — design brief, decisions, and build order — start with [`kb/agent-control-design.md`](kb/agent-control-design.md)
 - [`kb/hub-deploy-dokploy.md`](kb/hub-deploy-dokploy.md) — preferred Dokploy deployment path for `hub.tethon.dev`
+- [`kb/macos-host-daemon.md`](kb/macos-host-daemon.md) — macOS install/run story for `tethon-hostd`
