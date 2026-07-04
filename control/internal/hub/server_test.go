@@ -60,6 +60,64 @@ func TestHubRequiresBearerTokenWhenConfigured(t *testing.T) {
 	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "secret", http.StatusOK)
 }
 
+func TestHubRegistersDeviceWithoutEchoingPushToken(t *testing.T) {
+	hub := New(time.Second)
+	store := newTestDeviceStore(t)
+	hub.SetDeviceStore(store)
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	req := protocol.RegisterDeviceRequest{
+		DeviceID:    "phone-1",
+		PushService: "expo",
+		PushToken:   "ExpoPushToken[secret]",
+		Platform:    "ios",
+		AppID:       "dev.tethon.mobile",
+		AppVersion:  "1.0.0",
+	}
+	var resp protocol.RegisterDeviceResponse
+	postJSONInto(t, ts.URL+"/devices/register", req, &resp)
+	if resp.DeviceID != req.DeviceID || resp.PushService != "expo" || resp.Platform != "ios" || resp.UpdatedAt.IsZero() {
+		t.Fatalf("device response = %+v", resp)
+	}
+	raw := postJSONRaw(t, ts.URL+"/devices/register", req, "")
+	if strings.Contains(raw, req.PushToken) {
+		t.Fatalf("registration response echoed token: %s", raw)
+	}
+
+	tokens, err := store.ExpoPushTokens(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 1 || tokens[0] != req.PushToken {
+		t.Fatalf("stored tokens = %#v", tokens)
+	}
+}
+
+func TestHubDeviceRoutesValidateAndRequireAuth(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthToken("secret")
+	hub.SetDeviceStore(newTestDeviceStore(t))
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	assertStatus(t, http.MethodPost, ts.URL+"/devices/register", "", http.StatusUnauthorized)
+	assertPostStatus(t, ts.URL+"/devices/register", "secret", protocol.RegisterDeviceRequest{
+		DeviceID:    "phone-1",
+		PushService: "expo",
+		Platform:    "ios",
+	}, http.StatusBadRequest)
+
+	postJSONAuth(t, ts.URL+"/devices/register", "secret", protocol.RegisterDeviceRequest{
+		DeviceID:    "phone-1",
+		PushService: "expo",
+		PushToken:   "ExpoPushToken[secret]",
+		Platform:    "android",
+	})
+	assertStatus(t, http.MethodDelete, ts.URL+"/devices/phone-1", "secret", http.StatusNoContent)
+	assertStatus(t, http.MethodDelete, ts.URL+"/devices/phone-1", "secret", http.StatusNotFound)
+}
+
 func TestHubLogsHostRegistrationWithoutBearerToken(t *testing.T) {
 	var logs bytes.Buffer
 	hub := New(time.Second)
@@ -527,6 +585,60 @@ func postJSONAuth(t *testing.T, url, authToken string, value any) {
 	t.Helper()
 	var out any
 	postJSONIntoAuth(t, url, authToken, value, &out)
+}
+
+func postJSONRaw(t *testing.T, url string, value any, authToken string) string {
+	t.Helper()
+	body, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 300 {
+		t.Fatalf("POST %s returned %s: %s", url, resp.Status, strings.TrimSpace(string(raw)))
+	}
+	return string(raw)
+}
+
+func assertPostStatus(t *testing.T, url, authToken string, value any, want int) {
+	t.Helper()
+	body, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != want {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST %s returned %s, want %d: %s", url, resp.Status, want, strings.TrimSpace(string(raw)))
+	}
 }
 
 func postJSONInto(t *testing.T, url string, value any, out any) {

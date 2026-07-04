@@ -17,6 +17,10 @@ import {
   saveCredentials,
 } from '@/lib/hub/credentials';
 import { fetchHosts } from '@/lib/hub/client';
+import {
+  registerCurrentDevice,
+  unregisterCurrentDevice,
+} from '@/lib/push/registration';
 
 export type AuthState = {
   status: 'loading' | 'signed-out' | 'signed-in';
@@ -57,6 +61,11 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
           status: credentials === null ? 'signed-out' : 'signed-in',
           hubUrl: credentials?.url ?? getStoredHubUrl(),
         });
+        if (credentials !== null) {
+          void registerCurrentDevice().catch((error: unknown) => {
+            console.warn('push registration failed', error);
+          });
+        }
       } catch {
         if (!cancelled) {
           setState({ status: 'signed-out', hubUrl: null });
@@ -80,9 +89,15 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
     await fetchHosts(credentials);
     await saveCredentials(credentials);
     setState({ status: 'signed-in', hubUrl: credentials.url });
+    void registerCurrentDevice().catch((error: unknown) => {
+      console.warn('push registration failed', error);
+    });
   }, []);
 
   const signOut = useCallback(async () => {
+    await unregisterCurrentDevice().catch((error: unknown) => {
+      console.warn('push unregister failed', error);
+    });
     await clearCredentials();
     setState({ status: 'signed-out', hubUrl: null });
   }, []);

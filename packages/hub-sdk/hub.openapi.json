@@ -170,6 +170,51 @@
 				"required": ["sessions"],
 				"type": "object"
 			},
+			"RegisterDeviceRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"app_id": {
+						"type": "string"
+					},
+					"app_version": {
+						"type": "string"
+					},
+					"device_id": {
+						"type": "string"
+					},
+					"platform": {
+						"type": "string"
+					},
+					"push_service": {
+						"type": "string"
+					},
+					"push_token": {
+						"type": "string"
+					}
+				},
+				"required": ["device_id", "push_service", "push_token", "platform"],
+				"type": "object"
+			},
+			"RegisterDeviceResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"device_id": {
+						"type": "string"
+					},
+					"platform": {
+						"type": "string"
+					},
+					"push_service": {
+						"type": "string"
+					},
+					"updated_at": {
+						"format": "date-time",
+						"type": "string"
+					}
+				},
+				"required": ["device_id", "push_service", "platform", "updated_at"],
+				"type": "object"
+			},
 			"RegisterHostRequest": {
 				"additionalProperties": false,
 				"properties": {
@@ -335,6 +380,137 @@
 	},
 	"openapi": "3.1.0",
 	"paths": {
+		"/devices/register": {
+			"post": {
+				"operationId": "registerDevice",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/RegisterDeviceRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/RegisterDeviceResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"400": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Request"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Register a mobile device for push notifications",
+				"tags": ["devices"]
+			}
+		},
+		"/devices/{device_id}": {
+			"delete": {
+				"operationId": "unregisterDevice",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "device_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"204": {
+						"description": "No Content"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Unregister a mobile device from push notifications",
+				"tags": ["devices"]
+			}
+		},
 		"/hosts": {
 			"get": {
 				"operationId": "listHosts",

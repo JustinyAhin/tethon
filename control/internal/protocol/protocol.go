@@ -103,6 +103,22 @@ type RepoRefsResponse struct {
 	Tags     []string `json:"tags"`
 }
 
+type RegisterDeviceRequest struct {
+	DeviceID    string `json:"device_id"`
+	PushService string `json:"push_service"`
+	PushToken   string `json:"push_token"`
+	Platform    string `json:"platform"`
+	AppID       string `json:"app_id,omitempty"`
+	AppVersion  string `json:"app_version,omitempty"`
+}
+
+type RegisterDeviceResponse struct {
+	DeviceID    string    `json:"device_id"`
+	PushService string    `json:"push_service"`
+	Platform    string    `json:"platform"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type RegisterHostRequest struct {
 	HostID    string     `json:"host_id"`
 	Name      string     `json:"name"`

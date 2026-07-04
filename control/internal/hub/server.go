@@ -26,6 +26,7 @@ type Server struct {
 	hostTimeout time.Duration
 	now         func() time.Time
 	authTokens  [][sha256.Size]byte
+	devices     *DeviceStore
 	logger      *slog.Logger
 }
 
@@ -103,6 +104,10 @@ func (s *Server) handleReverseConnect(w http.ResponseWriter, r *http.Request, ho
 
 func (s *Server) SetAuthToken(token string) {
 	s.SetAuthTokens(token)
+}
+
+func (s *Server) SetDeviceStore(store *DeviceStore) {
+	s.devices = store
 }
 
 func (s *Server) SetAuthTokens(tokens ...string) {

@@ -7,6 +7,8 @@ import type {
   ListHostsResponse,
   ListSessionsResponse,
   RepoRefsResponse,
+  RegisterDeviceRequest,
+  RegisterDeviceResponse,
   ResolveApprovalRequest,
 } from '@/lib/hub/types';
 
@@ -146,6 +148,32 @@ export const fetchSessions = async (
   });
 
   return (await response.json()) as ListSessionsResponse;
+};
+
+export const registerDevice = async (
+  body: RegisterDeviceRequest,
+): Promise<RegisterDeviceResponse> => {
+  const response = await hubFetch({
+    path: '/devices/register',
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  });
+
+  return (await response.json()) as RegisterDeviceResponse;
+};
+
+export const unregisterDevice = async ({
+  deviceId,
+}: {
+  deviceId: string;
+}): Promise<void> => {
+  await hubFetch({
+    path: `/devices/${encodeURIComponent(deviceId)}`,
+    init: { method: 'DELETE' },
+  });
 };
 
 export const createSession = async (

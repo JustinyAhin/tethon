@@ -51,6 +51,8 @@ export type {
   InputReceivedPayload,
   RepoInfo,
   RepoRefsResponse,
+  RegisterDeviceRequest,
+  RegisterDeviceResponse,
   HostSummary,
   ListHostsResponse,
   OutputPayload,

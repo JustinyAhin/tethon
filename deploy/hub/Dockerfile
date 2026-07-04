@@ -12,6 +12,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tethon-
 FROM alpine:3.22
 
 RUN apk add --no-cache ca-certificates
+RUN mkdir -p /var/lib/tethon && chown nobody:nobody /var/lib/tethon
 
 COPY --from=build /out/tethon-hub /usr/local/bin/tethon-hub
 
@@ -22,4 +23,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 	CMD wget -qO- http://127.0.0.1:39180/healthz >/dev/null || exit 1
 
 ENTRYPOINT ["/usr/local/bin/tethon-hub"]
-CMD ["-addr", "0.0.0.0:39180"]
+CMD ["-addr", "0.0.0.0:39180", "-db", "/var/lib/tethon/hub.db"]

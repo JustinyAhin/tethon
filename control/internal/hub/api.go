@@ -84,6 +84,22 @@ type listHostsOutput struct {
 	Body protocol.ListHostsResponse
 }
 
+type registerDeviceInput struct {
+	Body protocol.RegisterDeviceRequest
+}
+
+type registerDeviceOutput struct {
+	Body protocol.RegisterDeviceResponse
+}
+
+type unregisterDeviceInput struct {
+	DeviceID string `path:"device_id"`
+}
+
+type unregisterDeviceOutput struct {
+	Status int `status:"204"`
+}
+
 type registerHostInput struct {
 	Body protocol.RegisterHostRequest
 }
@@ -157,6 +173,26 @@ type repoRefsOutput struct {
 }
 
 func (s *Server) registerHumaRoutes(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID:      "registerDevice",
+		Method:           http.MethodPost,
+		Path:             "/devices/register",
+		Summary:          "Register a mobile device for push notifications",
+		Tags:             []string{"devices"},
+		SkipValidateBody: true,
+		Errors:           []int{http.StatusBadRequest, http.StatusServiceUnavailable},
+	}, s.registerDeviceHuma)
+
+	huma.Register(api, huma.Operation{
+		OperationID:   "unregisterDevice",
+		Method:        http.MethodDelete,
+		Path:          "/devices/{device_id}",
+		Summary:       "Unregister a mobile device from push notifications",
+		Tags:          []string{"devices"},
+		DefaultStatus: http.StatusNoContent,
+		Errors:        []int{http.StatusNotFound, http.StatusServiceUnavailable},
+	}, s.unregisterDeviceHuma)
+
 	huma.Register(api, huma.Operation{
 		OperationID: "listHosts",
 		Method:      http.MethodGet,
@@ -279,6 +315,34 @@ func (s *Server) registerHumaRoutes(api huma.API) {
 		Tags:        []string{"repos"},
 		Errors:      []int{http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
 	}, s.listRepoRefsHuma)
+}
+
+func (s *Server) registerDeviceHuma(ctx context.Context, input *registerDeviceInput) (*registerDeviceOutput, error) {
+	if s.devices == nil {
+		return nil, huma.Error503ServiceUnavailable("device store is not configured")
+	}
+	req := input.Body
+	if err := validateDevice(req); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	resp, err := s.devices.Register(ctx, req)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+	return &registerDeviceOutput{Body: resp}, nil
+}
+
+func (s *Server) unregisterDeviceHuma(ctx context.Context, input *unregisterDeviceInput) (*unregisterDeviceOutput, error) {
+	if s.devices == nil {
+		return nil, huma.Error503ServiceUnavailable("device store is not configured")
+	}
+	if err := s.devices.Unregister(ctx, input.DeviceID); err != nil {
+		if errors.Is(err, errDeviceNotFound) {
+			return nil, huma.Error404NotFound("device not found")
+		}
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+	return &unregisterDeviceOutput{Status: http.StatusNoContent}, nil
 }
 
 func (s *Server) listHostsHuma(_ context.Context, _ *struct{}) (*listHostsOutput, error) {

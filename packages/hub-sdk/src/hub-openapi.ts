@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+	'/devices/register': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/** Register a mobile device for push notifications */
+		post: operations['registerDevice'];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	'/devices/{device_id}': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post?: never;
+		/** Unregister a mobile device from push notifications */
+		delete: operations['unregisterDevice'];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	'/hosts': {
 		parameters: {
 			query?: never;
@@ -229,6 +263,21 @@ export interface components {
 		ListSessionsResponse: {
 			sessions: components['schemas']['SessionSummary'][] | null;
 		};
+		RegisterDeviceRequest: {
+			app_id?: string;
+			app_version?: string;
+			device_id: string;
+			platform: string;
+			push_service: string;
+			push_token: string;
+		};
+		RegisterDeviceResponse: {
+			device_id: string;
+			platform: string;
+			push_service: string;
+			/** Format: date-time */
+			updated_at: string;
+		};
 		RegisterHostRequest: {
 			agents: string[] | null;
 			host_id: string;
@@ -280,6 +329,122 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+	registerDevice: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				'application/json': components['schemas']['RegisterDeviceRequest'];
+			};
+		};
+		responses: {
+			/** @description OK */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['RegisterDeviceResponse'];
+				};
+			};
+			/** @description Bad Request */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	unregisterDevice: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				device_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description No Content */
+			204: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content?: never;
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
 	listHosts: {
 		parameters: {
 			query?: never;

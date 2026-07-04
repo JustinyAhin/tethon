@@ -92,6 +92,20 @@ export interface RepoRefsResponse {
 	branches: string[];
 	tags: string[];
 }
+export interface RegisterDeviceRequest {
+	device_id: string;
+	push_service: string;
+	push_token: string;
+	platform: string;
+	app_id?: string;
+	app_version?: string;
+}
+export interface RegisterDeviceResponse {
+	device_id: string;
+	push_service: string;
+	platform: string;
+	updated_at: string /* RFC3339 */;
+}
 export interface RegisterHostRequest {
 	host_id: string;
 	name: string;

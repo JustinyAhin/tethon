@@ -26,7 +26,8 @@ hub for now.
 ## Files
 
 - `deploy/hub/Dockerfile` - builds the `tethon-hub` binary into a small image.
-- `deploy/hub/docker-compose.yml` - Dokploy Compose service.
+- `deploy/hub/docker-compose.yml` - Dokploy Compose service with the persistent
+  `hub-data` volume mounted at `/var/lib/tethon`.
 
 ## Dokploy Setup
 
@@ -75,10 +76,16 @@ hub for now.
    environment:
      TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
      TETHON_HUB_AUTH_TOKENS: ${TETHON_HUB_AUTH_TOKENS:-}
+   volumes:
+     - hub-data:/var/lib/tethon
    ```
 
    `TETHON_HUB_AUTH_TOKENS` is optional. It is only needed during token
    rotation.
+
+   The hub stores registered mobile push devices in SQLite at
+   `/var/lib/tethon/hub.db`. Keep the `hub-data` volume attached across
+   redeploys so phones do not need to reopen the app after every hub restart.
 
 4. Configure the domain in Dokploy.
 
