@@ -170,6 +170,34 @@
 				"required": ["sessions"],
 				"type": "object"
 			},
+			"PushApprovalTestRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"agent": {
+						"type": "string"
+					},
+					"command": {
+						"type": "string"
+					},
+					"host_id": {
+						"type": "string"
+					},
+					"repo": {
+						"type": "string"
+					},
+					"request_id": {
+						"type": "string"
+					},
+					"session_id": {
+						"type": "string"
+					},
+					"tool_name": {
+						"type": "string"
+					}
+				},
+				"required": ["host_id", "session_id", "request_id"],
+				"type": "object"
+			},
 			"PushTestRejection": {
 				"additionalProperties": false,
 				"properties": {
@@ -723,6 +751,85 @@
 				},
 				"summary": "Refresh a host heartbeat",
 				"tags": ["hosts"]
+			}
+		},
+		"/push/approvals/test": {
+			"post": {
+				"operationId": "sendApprovalTestPush",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/PushApprovalTestRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/PushTestResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"400": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Request"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Send a test approval push notification to registered devices",
+				"tags": ["push"]
 			}
 		},
 		"/push/test": {

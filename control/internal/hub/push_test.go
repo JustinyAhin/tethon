@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"tethon/internal/protocol"
@@ -88,6 +89,74 @@ func TestExpoPushSenderMapsTicketRejections(t *testing.T) {
 	}
 	if len(resp.Rejections) != 1 || resp.Rejections[0].DeviceID != "phone-2" || resp.Rejections[0].Code != expoDeviceNotRegister {
 		t.Fatalf("rejections = %+v", resp.Rejections)
+	}
+}
+
+func TestApprovalPushMessageCarriesSafeDecisionContext(t *testing.T) {
+	message := approvalPushMessage("ExpoPushToken[secret]", protocol.PushApprovalTestRequest{
+		HostID:    "mac",
+		SessionID: "ses_1",
+		RequestID: "approval_1",
+		Agent:     "claude-cli",
+		Repo:      "/Users/alice/client/.env.local",
+		ToolName:  "Bash",
+		Command:   `OPENAI_API_KEY=sk-test bash -lc "curl -H 'Authorization: Bearer abc' https://example.com"`,
+	})
+
+	visiblePayload := struct {
+		Title string         `json:"title"`
+		Body  string         `json:"body"`
+		Data  map[string]any `json:"data"`
+	}{Title: message.Title, Body: message.Body, Data: message.Data}
+	raw, err := json.Marshal(visiblePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leaked := range []string{"sk-test", "Bearer abc", "ExpoPushToken[secret]", "/Users/alice/client/.env.local"} {
+		if strings.Contains(string(raw), leaked) {
+			t.Fatalf("approval push payload leaked %q in %s", leaked, raw)
+		}
+	}
+	if message.Title != "Approval needed" {
+		t.Fatalf("title = %q, want Approval needed", message.Title)
+	}
+	if !strings.Contains(message.Body, "claude-cli/Bash needs approval") {
+		t.Fatalf("body = %q, want safe agent/tool summary", message.Body)
+	}
+	if message.Data["kind"] != "approval_requested" || message.Data["host_id"] != "mac" || message.Data["session_id"] != "ses_1" || message.Data["request_id"] != "approval_1" {
+		t.Fatalf("data = %#v, want stable approval identifiers", message.Data)
+	}
+	if message.Data["command_redacted"] != true {
+		t.Fatalf("data = %#v, want command_redacted true", message.Data)
+	}
+}
+
+func TestExpoPushSenderSendsApprovalPayload(t *testing.T) {
+	var messages []expoPushMessage
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&messages); err != nil {
+			t.Fatal(err)
+		}
+		writeJSON(w, http.StatusOK, expoPushResponse{Data: []expoPushTicket{{Status: "ok", ID: "ticket-1"}}})
+	}))
+	t.Cleanup(ts.Close)
+
+	sender := NewExpoPushSender(ExpoPushConfig{Endpoint: ts.URL, Client: ts.Client()})
+	resp, err := sender.SendApproval(context.Background(), []ExpoDevice{{DeviceID: "phone-1", PushToken: "ExpoPushToken[1]"}}, protocol.PushApprovalTestRequest{
+		HostID:    "mac",
+		SessionID: "ses_1",
+		RequestID: "approval_1",
+		Agent:     "claude-cli",
+		ToolName:  "Bash",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Accepted != 1 || len(messages) != 1 {
+		t.Fatalf("resp = %+v messages = %#v", resp, messages)
+	}
+	if messages[0].Data["kind"] != "approval_requested" {
+		t.Fatalf("message data = %#v, want approval_requested kind", messages[0].Data)
 	}
 }
 

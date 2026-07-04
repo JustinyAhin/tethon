@@ -108,6 +108,10 @@ type pushTestOutput struct {
 	Body protocol.PushTestResponse
 }
 
+type pushApprovalTestInput struct {
+	Body protocol.PushApprovalTestRequest
+}
+
 type registerHostInput struct {
 	Body protocol.RegisterHostRequest
 }
@@ -210,6 +214,16 @@ func (s *Server) registerHumaRoutes(api huma.API) {
 		SkipValidateBody: true,
 		Errors:           []int{http.StatusBadGateway, http.StatusServiceUnavailable},
 	}, s.sendTestPushHuma)
+
+	huma.Register(api, huma.Operation{
+		OperationID:      "sendApprovalTestPush",
+		Method:           http.MethodPost,
+		Path:             "/push/approvals/test",
+		Summary:          "Send a test approval push notification to registered devices",
+		Tags:             []string{"push"},
+		SkipValidateBody: true,
+		Errors:           []int{http.StatusBadRequest, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.sendApprovalTestPushHuma)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "listHosts",
@@ -364,29 +378,52 @@ func (s *Server) unregisterDeviceHuma(ctx context.Context, input *unregisterDevi
 }
 
 func (s *Server) sendTestPushHuma(ctx context.Context, input *pushTestInput) (*pushTestOutput, error) {
+	resp, err := s.sendPush(ctx, func(devices []ExpoDevice) (protocol.PushTestResponse, error) {
+		return s.push.SendTest(ctx, devices, input.Body)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &pushTestOutput{Body: resp}, nil
+}
+
+func (s *Server) sendApprovalTestPushHuma(ctx context.Context, input *pushApprovalTestInput) (*pushTestOutput, error) {
+	if err := validatePushApprovalTest(input.Body); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	resp, err := s.sendPush(ctx, func(devices []ExpoDevice) (protocol.PushTestResponse, error) {
+		return s.push.SendApproval(ctx, devices, input.Body)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &pushTestOutput{Body: resp}, nil
+}
+
+func (s *Server) sendPush(ctx context.Context, send func([]ExpoDevice) (protocol.PushTestResponse, error)) (protocol.PushTestResponse, error) {
 	if s.devices == nil {
-		return nil, huma.Error503ServiceUnavailable("device store is not configured")
+		return protocol.PushTestResponse{}, huma.Error503ServiceUnavailable("device store is not configured")
 	}
 	if s.push == nil {
-		return nil, huma.Error503ServiceUnavailable("push sender is not configured")
+		return protocol.PushTestResponse{}, huma.Error503ServiceUnavailable("push sender is not configured")
 	}
 	devices, err := s.devices.ActiveExpoDevices(ctx)
 	if err != nil {
-		return nil, huma.Error500InternalServerError(err.Error())
+		return protocol.PushTestResponse{}, huma.Error500InternalServerError(err.Error())
 	}
-	resp, err := s.push.SendTest(ctx, devices, input.Body)
+	resp, err := send(devices)
 	if err != nil {
-		return nil, huma.Error502BadGateway(err.Error())
+		return protocol.PushTestResponse{}, huma.Error502BadGateway(err.Error())
 	}
 	for _, rejection := range resp.Rejections {
 		if rejection.Code != expoDeviceNotRegister {
 			continue
 		}
 		if err := s.devices.Disable(ctx, rejection.DeviceID); err != nil && !errors.Is(err, errDeviceNotFound) {
-			return nil, huma.Error500InternalServerError(err.Error())
+			return protocol.PushTestResponse{}, huma.Error500InternalServerError(err.Error())
 		}
 	}
-	return &pushTestOutput{Body: resp}, nil
+	return resp, nil
 }
 
 func (s *Server) listHostsHuma(_ context.Context, _ *struct{}) (*listHostsOutput, error) {

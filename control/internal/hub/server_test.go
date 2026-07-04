@@ -166,6 +166,60 @@ func TestHubSendsTestPushAndDisablesUnregisteredDevice(t *testing.T) {
 	}
 }
 
+func TestHubSendsApprovalTestPushAndDisablesUnregisteredDevice(t *testing.T) {
+	hub := New(time.Second)
+	store := newTestDeviceStore(t)
+	hub.SetAuthToken("secret")
+	hub.SetDeviceStore(store)
+	hub.SetPushSender(fakePushSender{
+		approvalResponse: protocol.PushTestResponse{
+			Registered: 2,
+			Attempted:  2,
+			Accepted:   1,
+			Rejected:   1,
+			Rejections: []protocol.PushTestRejection{{
+				DeviceID: "phone-2",
+				Code:     expoDeviceNotRegister,
+				Message:  "not registered",
+			}},
+		},
+	})
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	for _, req := range []protocol.RegisterDeviceRequest{
+		{DeviceID: "phone-1", PushService: "expo", PushToken: "ExpoPushToken[1]", Platform: "ios"},
+		{DeviceID: "phone-2", PushService: "expo", PushToken: "ExpoPushToken[2]", Platform: "android"},
+	} {
+		postJSONAuth(t, ts.URL+"/devices/register", "secret", req)
+	}
+	raw := postJSONRaw(t, ts.URL+"/push/approvals/test", protocol.PushApprovalTestRequest{
+		HostID:    "mac",
+		SessionID: "ses_1",
+		RequestID: "approval_1",
+		Agent:     "claude-cli",
+		ToolName:  "Bash",
+	}, "secret")
+	if strings.Contains(raw, "ExpoPushToken") {
+		t.Fatalf("approval test push response leaked token: %s", raw)
+	}
+	var resp protocol.PushTestResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Registered != 2 || resp.Accepted != 1 || resp.Rejected != 1 {
+		t.Fatalf("push response = %+v", resp)
+	}
+
+	devices, err := store.ActiveExpoDevices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].DeviceID != "phone-1" {
+		t.Fatalf("active devices after rejection = %#v", devices)
+	}
+}
+
 func TestHubTestPushRequiresAuthAndConfiguredSender(t *testing.T) {
 	hub := New(time.Second)
 	hub.SetAuthToken("secret")
@@ -175,6 +229,23 @@ func TestHubTestPushRequiresAuthAndConfiguredSender(t *testing.T) {
 
 	assertStatus(t, http.MethodPost, ts.URL+"/push/test", "", http.StatusUnauthorized)
 	assertPostStatus(t, ts.URL+"/push/test", "secret", protocol.PushTestRequest{}, http.StatusServiceUnavailable)
+}
+
+func TestHubApprovalTestPushRequiresAuthAndValidContext(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthToken("secret")
+	hub.SetDeviceStore(newTestDeviceStore(t))
+	hub.SetPushSender(fakePushSender{})
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	assertStatus(t, http.MethodPost, ts.URL+"/push/approvals/test", "", http.StatusUnauthorized)
+	assertPostStatus(t, ts.URL+"/push/approvals/test", "secret", protocol.PushApprovalTestRequest{}, http.StatusBadRequest)
+	assertPostStatus(t, ts.URL+"/push/approvals/test", "secret", protocol.PushApprovalTestRequest{
+		HostID:    "mac",
+		SessionID: "ses_1",
+		RequestID: "approval_1",
+	}, http.StatusOK)
 }
 
 func TestHubLogsHostRegistrationWithoutBearerToken(t *testing.T) {
@@ -873,10 +944,15 @@ func strconvInt(value int64) string {
 }
 
 type fakePushSender struct {
-	response protocol.PushTestResponse
-	err      error
+	response         protocol.PushTestResponse
+	approvalResponse protocol.PushTestResponse
+	err              error
 }
 
 func (f fakePushSender) SendTest(context.Context, []ExpoDevice, protocol.PushTestRequest) (protocol.PushTestResponse, error) {
 	return f.response, f.err
+}
+
+func (f fakePushSender) SendApproval(context.Context, []ExpoDevice, protocol.PushApprovalTestRequest) (protocol.PushTestResponse, error) {
+	return f.approvalResponse, f.err
 }

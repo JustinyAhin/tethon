@@ -110,6 +110,15 @@ export interface PushTestRequest {
 	title?: string;
 	body?: string;
 }
+export interface PushApprovalTestRequest {
+	host_id: string;
+	session_id: string;
+	request_id: string;
+	agent?: string;
+	repo?: string;
+	tool_name?: string;
+	command?: string;
+}
 export interface PushTestResponse {
 	registered: number /* int */;
 	attempted: number /* int */;

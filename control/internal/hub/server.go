@@ -250,6 +250,19 @@ func validateHost(req protocol.RegisterHostRequest) error {
 	return nil
 }
 
+func validatePushApprovalTest(req protocol.PushApprovalTestRequest) error {
+	if strings.TrimSpace(req.HostID) == "" {
+		return errors.New("host_id is required")
+	}
+	if strings.TrimSpace(req.SessionID) == "" {
+		return errors.New("session_id is required")
+	}
+	if strings.TrimSpace(req.RequestID) == "" {
+		return errors.New("request_id is required")
+	}
+	return nil
+}
+
 func parseSessionPath(path string) (hostID, localID, suffix string, ok bool) {
 	parts := strings.SplitN(path, "/", 3)
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" {

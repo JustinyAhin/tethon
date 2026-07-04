@@ -162,6 +162,16 @@ hub for now.
      -d '{"title":"Tethon","body":"Push test"}'
    ```
 
+   Send an approval-shaped smoke-test notification:
+
+   ```sh
+   curl -fsS \
+     -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" \
+     -H "Content-Type: application/json" \
+     -X POST https://hub.tethon.dev/push/approvals/test \
+     -d '{"host_id":"mac","session_id":"ses_test","request_id":"approval_test","agent":"claude-cli","tool_name":"Bash","repo":"tethon"}'
+   ```
+
 7. Point web at the hub.
 
    The `tethon-web` Worker needs:

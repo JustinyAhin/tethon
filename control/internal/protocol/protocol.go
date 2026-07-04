@@ -124,6 +124,16 @@ type PushTestRequest struct {
 	Body  string `json:"body,omitempty"`
 }
 
+type PushApprovalTestRequest struct {
+	HostID    string `json:"host_id"`
+	SessionID string `json:"session_id"`
+	RequestID string `json:"request_id"`
+	Agent     string `json:"agent,omitempty"`
+	Repo      string `json:"repo,omitempty"`
+	ToolName  string `json:"tool_name,omitempty"`
+	Command   string `json:"command,omitempty"`
+}
+
 type PushTestResponse struct {
 	Registered int                 `json:"registered"`
 	Attempted  int                 `json:"attempted"`
