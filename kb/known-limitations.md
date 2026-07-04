@@ -46,6 +46,13 @@ the target design in `kb/agent-control-design.md`.
   should be added only as an explicit workspace mode with clear warnings about
   modifying the main checkout.
 
+## Host Resource Visibility
+
+- Host resource visibility is planned as a read-only, Tethon-owned-resource
+  snapshot. It is not a general remote process manager.
+- The security/privacy policy for process, port, command, and path exposure is
+  documented in `kb/resource-visibility-policy.md`.
+
 ## Agent Events
 
 - Routine Claude `rate_limit_event` records are dropped. A dedicated
