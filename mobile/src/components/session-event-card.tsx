@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ApprovalActions } from '@/components/approval-actions';
 import { MarkdownOutput } from '@/components/markdown-output';
 import {
   EventApprovalResolved,
@@ -12,6 +13,7 @@ import {
   EventSessionStarted,
   EventToolResult,
   EventUsage,
+  type ApprovalAction,
   type ApprovalPayload,
   type ApprovalResolvedPayload,
   type DonePayload,
@@ -25,6 +27,15 @@ import {
 } from '@/lib/hub/types';
 
 type SessionEventCardProps = {
+  approvalActions?: {
+    errors: Record<string, string>;
+    submitting: Record<string, boolean>;
+    onResolve: (args: {
+      action: ApprovalAction;
+      requestId: string;
+      text?: string;
+    }) => void;
+  };
   event: SessionEvent;
   resolvedApprovals: Record<string, ApprovalResolvedPayload>;
 };
@@ -32,6 +43,7 @@ type SessionEventCardProps = {
 const monospaceFont = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
 export const SessionEventCard = ({
+  approvalActions,
   event,
   resolvedApprovals,
 }: SessionEventCardProps) => {
@@ -45,6 +57,7 @@ export const SessionEventCard = ({
     case EventAwaitingApproval:
       return renderAwaitingApproval(
         event.payload as ApprovalPayload,
+        approvalActions,
         resolvedApprovals,
       );
     case EventApprovalResolved:
@@ -90,6 +103,7 @@ const renderInputReceived = (payload: InputReceivedPayload) => (
 
 const renderAwaitingApproval = (
   payload: ApprovalPayload,
+  approvalActions: SessionEventCardProps['approvalActions'],
   resolvedApprovals: Record<string, ApprovalResolvedPayload>,
 ) => {
   const resolved = resolvedApprovals[payload.request_id];
@@ -143,7 +157,14 @@ const renderAwaitingApproval = (
           <Text style={styles.resolvedReply}>{resolved.text}</Text>
         </View>
       ) : null}
-      {/* tethon-927.5: approve/deny/reply actions render here */}
+      {!isResolved && approvalActions !== undefined ? (
+        <ApprovalActions
+          error={approvalActions.errors[payload.request_id] ?? null}
+          onResolve={approvalActions.onResolve}
+          requestId={payload.request_id}
+          submitting={approvalActions.submitting[payload.request_id] ?? false}
+        />
+      ) : null}
     </View>
   );
 };

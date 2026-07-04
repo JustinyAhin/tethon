@@ -1,8 +1,10 @@
 import { getCredentials, type HubCredentials } from '@/lib/hub/credentials';
 import type {
+  ApprovalAction,
   InputRequest,
   ListHostsResponse,
   ListSessionsResponse,
+  ResolveApprovalRequest,
 } from '@/lib/hub/types';
 
 const requestTimeoutMs = 10_000;
@@ -154,6 +156,32 @@ export const sendInput = async ({
 
   await hubFetch({
     path: `/sessions/${encodeURIComponent(hostId)}/${encodeURIComponent(localId)}/input`,
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  });
+};
+
+export const resolveApproval = async ({
+  action,
+  hostId,
+  localId,
+  requestId,
+  text,
+}: {
+  action: ApprovalAction;
+  hostId: string;
+  localId: string;
+  requestId: string;
+  text?: string;
+}): Promise<void> => {
+  const body: ResolveApprovalRequest =
+    action === 'reply' ? { action, text: text ?? '' } : { action };
+
+  await hubFetch({
+    path: `/sessions/${encodeURIComponent(hostId)}/${encodeURIComponent(localId)}/approvals/${encodeURIComponent(requestId)}`,
     init: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

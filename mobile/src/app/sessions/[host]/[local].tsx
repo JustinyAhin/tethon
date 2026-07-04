@@ -23,10 +23,12 @@ import {
   deleteSession,
   HubAuthError,
   HubRequestError,
+  resolveApproval,
 } from '@/lib/hub/client';
 import { useAuth } from '@/lib/hub/auth-context';
 import {
   EventApprovalResolved,
+  type ApprovalAction,
   type ApprovalResolvedPayload,
   type SessionEvent,
   type SessionSummary,
@@ -107,6 +109,12 @@ const SessionDetailContent = ({
   const { invalidate } = useAuth();
   const [busyAction, setBusyAction] = useState<'stop' | 'delete' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [approvalSubmitting, setApprovalSubmitting] = useState<
+    Record<string, boolean>
+  >({});
+  const [approvalErrors, setApprovalErrors] = useState<Record<string, string>>(
+    {},
+  );
   const { events, status: streamStatus, streamError } = useSessionStream({
     hostId,
     localId,
@@ -209,6 +217,52 @@ const SessionDetailContent = ({
     requestAnimationFrame(() => {
       listRef.current?.scrollToEnd({ animated: false });
     });
+  };
+
+  const submitApproval = async ({
+    action,
+    requestId,
+    text,
+  }: {
+    action: ApprovalAction;
+    requestId: string;
+    text?: string;
+  }) => {
+    if (approvalSubmitting[requestId] || resolvedApprovals[requestId]) {
+      return;
+    }
+
+    setApprovalSubmitting((current) => ({ ...current, [requestId]: true }));
+    setApprovalErrors((current) => {
+      const next = { ...current };
+      delete next[requestId];
+      return next;
+    });
+
+    try {
+      await resolveApproval({ action, hostId, localId, requestId, text });
+    } catch (caught) {
+      if (caught instanceof HubAuthError) {
+        await invalidate();
+        return;
+      }
+
+      if (caught instanceof HubRequestError && caught.status === 404) {
+        return;
+      }
+
+      setApprovalSubmitting((current) => ({
+        ...current,
+        [requestId]: false,
+      }));
+      setApprovalErrors((current) => ({
+        ...current,
+        [requestId]:
+          caught instanceof HubRequestError && caught.status === 409
+            ? 'Session is no longer active.'
+            : toActionError(caught, 'Could not resolve approval'),
+      }));
+    }
   };
 
   const header = (
@@ -316,6 +370,13 @@ const SessionDetailContent = ({
           onScroll={onScroll}
           renderItem={({ item }) => (
             <SessionEventCard
+              approvalActions={{
+                errors: approvalErrors,
+                onResolve: (args) => {
+                  void submitApproval(args);
+                },
+                submitting: approvalSubmitting,
+              }}
               event={item}
               resolvedApprovals={resolvedApprovals}
             />
