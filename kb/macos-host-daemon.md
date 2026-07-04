@@ -8,7 +8,9 @@ LaunchAgent on a Mac.
 - A deployed hub, for example `https://hub.tethon.dev`.
 - The same hub bearer token configured on the hub as `TETHON_HUB_AUTH_TOKEN`.
 - Go installed on the Mac.
-- A repo root that `tethon-hostd` should advertise.
+- A repo root that `tethon-hostd` should advertise. This may be either a git
+  repository or a workspace parent whose immediate children are git
+  repositories.
 - For the current prototype, a Mac address that the VPS hub can reach. Use the
   Mac's Tailscale IP or DNS name for `--addr`.
 
@@ -27,6 +29,10 @@ scripts/macos-hostd.sh install \
   --repo-root /path/to/repos \
   --name "$(hostname -s)"
 ```
+
+`--repo-root` may point at one git repository or at a workspace parent such as
+`~/work/projects`; hostd discovers git repositories in the parent directory's
+immediate children and ignores non-repo children.
 
 The script:
 

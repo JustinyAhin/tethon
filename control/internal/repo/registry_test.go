@@ -2,8 +2,10 @@ package repo
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,10 +65,91 @@ func TestDiscover(t *testing.T) {
 	}
 }
 
-func TestDiscoverRejectsNonGitRoot(t *testing.T) {
-	_, err := Discover(context.Background(), []string{t.TempDir()})
+func TestDiscoverWorkspaceParent(t *testing.T) {
+	workspace := t.TempDir()
+	app := filepath.Join(workspace, "app")
+	lib := filepath.Join(workspace, "lib")
+	nonRepo := filepath.Join(workspace, "notes")
+	for _, dir := range []string{app, lib, nonRepo} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "README.txt"), []byte("not a repo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit(t, app)
+	gitInit(t, lib)
+
+	repos, err := Discover(context.Background(), []string{workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 repos, got %d: %+v", len(repos), repos)
+	}
+	if repos[0].Name != "app" || repos[1].Name != "lib" {
+		t.Fatalf("repo order/names = %+v, want app then lib", repos)
+	}
+	wantApp, err := filepath.EvalSymlinks(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repos[0].Path != wantApp {
+		t.Fatalf("first repo path = %q, want %q", repos[0].Path, wantApp)
+	}
+}
+
+func TestDiscoverWorkspaceParentOnlyUsesImmediateChildren(t *testing.T) {
+	workspace := t.TempDir()
+	app := filepath.Join(workspace, "app")
+	nested := filepath.Join(workspace, "group", "nested")
+	for _, dir := range []string{app, nested} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitInit(t, app)
+	gitInit(t, nested)
+
+	repos, err := Discover(context.Background(), []string{workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 || repos[0].Name != "app" {
+		t.Fatalf("repos = %+v, want only direct child app", repos)
+	}
+}
+
+func TestDiscoverDeduplicatesParentAndExplicitChild(t *testing.T) {
+	workspace := t.TempDir()
+	app := filepath.Join(workspace, "app")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitInit(t, app)
+
+	repos, err := Discover(context.Background(), []string{workspace, app})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 || repos[0].Name != "app" {
+		t.Fatalf("repos = %+v, want one app repo", repos)
+	}
+}
+
+func TestDiscoverRejectsWorkspaceWithoutRepos(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Discover(context.Background(), []string{workspace})
 	if err == nil {
-		t.Fatal("expected non-git root to be rejected")
+		t.Fatal("expected workspace without repos to be rejected")
+	}
+	if !strings.Contains(err.Error(), "contains no git repositories") {
+		t.Fatalf("error = %q, want clear no-repos message", err)
 	}
 }
 

@@ -106,59 +106,112 @@ func (r *Registry) Paths() []string {
 	return paths
 }
 
-// Discover resolves each input path to a git work-tree root and returns the
-// corresponding repos. A path that is not inside a git repository is an error:
-// worktree isolation requires git. Paths that resolve to the same repo are
-// deduplicated. Ids are derived from the repo name and stay stable across runs.
+// Discover resolves each input path to one or more git work-tree roots and
+// returns the corresponding repos. Inputs may be git repositories or workspace
+// parent directories containing git repositories as immediate children. Child
+// entries that are not git repositories are ignored. Paths that resolve to the
+// same repo are deduplicated. Ids are derived from the repo name and stay stable
+// across runs.
 func Discover(ctx context.Context, paths []string) ([]Repo, error) {
 	repos := make([]Repo, 0, len(paths))
 	usedIDs := make(map[string]struct{}, len(paths))
 	seenRoots := make(map[string]struct{}, len(paths))
 	for _, p := range paths {
-		abs, err := filepath.Abs(p)
+		roots, err := discoverRoots(ctx, p)
 		if err != nil {
 			return nil, err
 		}
-		real, err := filepath.EvalSymlinks(abs)
-		if err != nil {
-			return nil, fmt.Errorf("repo root %q: %w", p, err)
-		}
-		info, err := os.Stat(real)
-		if err != nil {
-			return nil, fmt.Errorf("repo root %q: %w", p, err)
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("repo root %q is not a directory", p)
-		}
-		top, err := gitOutput(ctx, real, "rev-parse", "--show-toplevel")
-		if err != nil {
-			return nil, fmt.Errorf("repo root %q is not a git repository", p)
-		}
-		root, err := filepath.EvalSymlinks(filepath.Clean(top))
-		if err != nil {
-			return nil, fmt.Errorf("repo root %q: %w", p, err)
-		}
-		if _, ok := seenRoots[root]; ok {
-			continue
-		}
-		seenRoots[root] = struct{}{}
+		for _, root := range roots {
+			if _, ok := seenRoots[root]; ok {
+				continue
+			}
+			seenRoots[root] = struct{}{}
 
-		name := filepath.Base(root)
-		id := slug(name)
-		if _, ok := usedIDs[id]; ok {
-			id = id + "-" + shortHash(root)
-		}
-		usedIDs[id] = struct{}{}
+			name := filepath.Base(root)
+			id := slug(name)
+			if _, ok := usedIDs[id]; ok {
+				id = id + "-" + shortHash(root)
+			}
+			usedIDs[id] = struct{}{}
 
-		branch, _ := gitOutput(ctx, root, "symbolic-ref", "--short", "HEAD")
-		repos = append(repos, Repo{
-			ID:            id,
-			Name:          name,
-			Path:          root,
-			DefaultBranch: strings.TrimSpace(branch),
-		})
+			branch, _ := gitOutput(ctx, root, "symbolic-ref", "--short", "HEAD")
+			repos = append(repos, Repo{
+				ID:            id,
+				Name:          name,
+				Path:          root,
+				DefaultBranch: strings.TrimSpace(branch),
+			})
+		}
+	}
+	if len(repos) == 0 {
+		return nil, errors.New("no git repositories discovered")
 	}
 	return repos, nil
+}
+
+func discoverRoots(ctx context.Context, path string) ([]string, error) {
+	real, err := resolveInputDir(path)
+	if err != nil {
+		return nil, err
+	}
+	if root, ok := gitTopLevel(ctx, real); ok {
+		return []string{root}, nil
+	}
+
+	entries, err := os.ReadDir(real)
+	if err != nil {
+		return nil, fmt.Errorf("repo root %q: %w", path, err)
+	}
+	roots := []string{}
+	for _, entry := range entries {
+		child := filepath.Join(real, entry.Name())
+		childReal, err := filepath.EvalSymlinks(child)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(childReal)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if root, ok := gitTopLevel(ctx, childReal); ok {
+			roots = append(roots, root)
+		}
+	}
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("repo root %q is not a git repository and contains no git repositories", path)
+	}
+	return roots, nil
+}
+
+func resolveInputDir(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("repo root %q: %w", path, err)
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return "", fmt.Errorf("repo root %q: %w", path, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("repo root %q is not a directory", path)
+	}
+	return real, nil
+}
+
+func gitTopLevel(ctx context.Context, dir string) (string, bool) {
+	top, err := gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", false
+	}
+	root, err := filepath.EvalSymlinks(filepath.Clean(top))
+	if err != nil {
+		return "", false
+	}
+	return root, true
 }
 
 // ListRefs returns a repo's existing branches and tags so clients can offer a
