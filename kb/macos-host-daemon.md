@@ -11,12 +11,12 @@ LaunchAgent on a Mac.
 - A repo root that `tethon-hostd` should advertise. This may be either a git
   repository or a workspace parent whose immediate children are git
   repositories.
-- For the current prototype, a Mac address that the VPS hub can reach. Use the
-  Mac's Tailscale IP or DNS name for `--addr`.
+- A local listener address for host diagnostics, for example
+  `127.0.0.1:39181`.
 
-The current hub still calls the registered host URL directly. Host-initiated
-persistent hub connections have not landed yet, so `--addr 127.0.0.1:39181`
-only works when the hub is on the same machine.
+The hub routes session operations over a host-initiated WebSocket, so the hub
+does not need to reach the `--addr` listener. Keep `--addr` bound to a local or
+private interface unless you intentionally want remote diagnostics.
 
 ## Install
 
@@ -25,7 +25,7 @@ From the repo root on the Mac:
 ```sh
 scripts/macos-hostd.sh install \
   --hub-url https://hub.tethon.dev \
-  --addr <mac-tailscale-ip>:39181 \
+  --addr 127.0.0.1:39181 \
   --repo-root /path/to/repos \
   --name "$(hostname -s)"
 ```
@@ -93,8 +93,11 @@ Useful hostd log events:
 - `hub_heartbeat_failed`: hostd registered before, but heartbeat failed. Check
   the hub URL, token, network route, and `next_retry_delay`.
 - `hub_heartbeat_recovered`: heartbeat recovered after one or more failures.
-- `hostd_serving`: confirms the advertised URL that the hub will call for
-  session operations.
+- `hub_reverse_connected`: hostd established the outbound session-operation
+  tunnel to the hub.
+- `hub_reverse_connect_failed` / `hub_reverse_disconnected`: hostd could not
+  establish or maintain the outbound tunnel.
+- `hostd_serving`: confirms the local diagnostic listener.
 
 Run the local doctor:
 
@@ -116,8 +119,8 @@ curl -fsS http://<mac-tailscale-ip>:39181/status
 ```
 
 `/status` includes the host id, advertised URL, hub URL, registered repo names,
-uptime, last hub success/failure, and retry state. It does not include bearer
-tokens or environment file contents.
+uptime, last hub success/failure, retry state, and reverse connection state. It
+does not include bearer tokens or environment file contents.
 
 Restart after changing config or reinstalling:
 
@@ -151,7 +154,7 @@ The installed Mac should appear with `online: true`. If it does not, check:
 - `scripts/macos-hostd.sh doctor`
 - `scripts/macos-hostd.sh logs`
 - the token in `~/.config/tethon/hostd.env`
-- that the hub can reach `http://<mac-tailscale-ip>:39181`
+- that logs show `hub_reverse_connected`
 - that the repo root exists and contains git repositories
 
 Common causes:
@@ -160,11 +163,10 @@ Common causes:
   not match the hub's accepted bearer token.
 - Host is missing from `/hosts`: the LaunchAgent is not running, the wrapper
   cannot start `tethon-hostd`, or hostd cannot reach the hub.
-- Host appears but is offline: heartbeats stopped, the Mac slept, the network
-  changed, or the daemon restarted and is still retrying registration.
-- Host is online but session operations fail: the hub cannot reach the
-  `advertised_url` shown in hostd logs. For the current prototype, the VPS must
-  be able to call the Mac daemon directly.
+- Host appears but is offline: the reverse WebSocket is disconnected, the Mac
+  slept, the network changed, or the daemon restarted and is still reconnecting.
+- Host is online but session operations fail: check `hub_reverse_disconnected`
+  and hostd session logs for the failed operation.
 
 ## Paths
 

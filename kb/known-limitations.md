@@ -7,11 +7,9 @@ the target design in `kb/agent-control-design.md`.
 
 ## Networking
 
-- The host daemon registers and heartbeats outbound, but the hub still routes
-  session operations by calling the host daemon URL recorded at registration.
-  For remote use today, the VPS hub must be able to reach the Mac host daemon
-  URL, usually over Tailscale.
-- Host-initiated persistent session connections have not landed yet.
+- The host daemon registers outbound and keeps a host-initiated WebSocket open
+  to the hub for session operations. The hub does not need inbound reachability
+  to the Mac host daemon listener.
 
 ## Clients
 
@@ -35,8 +33,8 @@ the target design in `kb/agent-control-design.md`.
 - The hub host registry is in memory. Hosts re-register via retry/backoff, but
   the hub does not persist registry/session index state across restarts yet.
 - The hub has unauthenticated `/healthz`; hostd has local `/healthz` and
-  `/status` diagnostics. These are process diagnostics, not a replacement for
-  the planned host-initiated persistent session connection.
+  `/status` diagnostics. These are process diagnostics, not a durable hub
+  registry or session index.
 
 ## Host Daemon
 
@@ -50,9 +48,8 @@ the target design in `kb/agent-control-design.md`.
 
 ## Agent Events
 
-- The Claude adapter currently surfaces `rate_limit_event` as user-visible
-  `output` text. Beads tracks this as `tethon-4kl`; the likely fix is to drop
-  routine events or introduce a dedicated notice/rate-limit event type.
+- Routine Claude `rate_limit_event` records are dropped. A dedicated
+  notice/rate-limit event type remains a possible future protocol addition.
 - Claude approved tool executions emit first-class `tool_result` events with
   bounded/redacted input and result payloads. `diff_available` and broader
   non-Claude tool-use event coverage are target protocol ideas, not current

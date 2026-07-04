@@ -1,12 +1,10 @@
 package hub
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
 	"net/http"
 	"reflect"
 	"sort"
@@ -340,16 +338,15 @@ func (s *Server) listSessionsHuma(ctx context.Context, _ *struct{}) (*listSessio
 	for _, host := range hosts {
 		var hostResp protocol.ListSessionsResponse
 		reqCtx, cancel := context.WithTimeout(ctx, sessionListFanoutTimeout)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, strings.TrimRight(host.URL, "/")+"/sessions", nil)
-		if err == nil {
-			var status int
-			status, err = s.doJSON(req, &hostResp)
-			if status >= 300 {
-				err = fmt.Errorf("host %s returned %d", host.HostID, status)
-			}
-		}
+		status, body, err := s.reverseRequestRaw(reqCtx, host.HostID, http.MethodGet, "/sessions", "", nil)
 		cancel()
 		if err != nil {
+			return nil, reverseHumaError(err)
+		}
+		if status >= 300 {
+			return nil, newResponseError(status, body)
+		}
+		if err := json.Unmarshal(body, &hostResp); err != nil {
 			return nil, huma.Error502BadGateway(err.Error())
 		}
 		for _, session := range hostResp.Sessions {
@@ -384,14 +381,18 @@ func (s *Server) createSessionHuma(ctx context.Context, input *createSessionInpu
 	hostReq := req
 	hostReq.HostID = ""
 	var hostResp protocol.CreateSessionResponse
-	status, body, err := s.postJSONRaw(ctx, strings.TrimRight(host.URL, "/")+"/sessions", hostReq)
+	body, err := json.Marshal(hostReq)
 	if err != nil {
-		return nil, huma.Error502BadGateway(err.Error())
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+	status, raw, err := s.reverseRequestRaw(ctx, host.HostID, http.MethodPost, "/sessions", "", body)
+	if err != nil {
+		return nil, reverseHumaError(err)
 	}
 	if status >= 300 {
-		return nil, newResponseError(status, body)
+		return nil, newResponseError(status, raw)
 	}
-	if err := json.Unmarshal(body, &hostResp); err != nil {
+	if err := json.Unmarshal(raw, &hostResp); err != nil {
 		return nil, huma.Error502BadGateway(err.Error())
 	}
 	hostResp.ID = req.HostID + "/" + hostResp.ID
@@ -404,45 +405,28 @@ func (s *Server) streamSessionHuma(ctx context.Context, input *streamSessionInpu
 		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
 	}
 
-	target := strings.TrimRight(host.URL, "/") + "/sessions/" + input.LocalID + "/stream?from=" + strconv.FormatInt(input.From, 10)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	pending, start, err := s.reverseStream(ctx, host.HostID, "/sessions/"+input.LocalID+"/stream", "from="+strconv.FormatInt(input.From, 10))
 	if err != nil {
-		return nil, huma.Error502BadGateway(err.Error())
+		return nil, reverseHumaError(err)
 	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, huma.Error502BadGateway(err.Error())
-	}
-	if resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return nil, newResponseError(resp.StatusCode, body)
+	if start.Status >= 300 {
+		defer pending.close(false)
+		status, body, err := collectReverseResponse(ctx, pending, start.Status)
+		if err != nil {
+			return nil, reverseHumaError(err)
+		}
+		return nil, newResponseError(status, body)
 	}
 
 	return &huma.StreamResponse{
 		Body: func(ctx huma.Context) {
-			defer resp.Body.Close()
 			ctx.SetHeader("Content-Type", "text/event-stream")
 			ctx.SetHeader("Cache-Control", "no-cache")
 			ctx.SetHeader("Connection", "keep-alive")
 
 			writer := ctx.BodyWriter()
 			flusher, _ := writer.(http.Flusher)
-			reader := bufio.NewReader(resp.Body)
-			for {
-				line, err := reader.ReadBytes('\n')
-				if len(line) > 0 {
-					if _, writeErr := writer.Write(line); writeErr != nil {
-						return
-					}
-					if flusher != nil {
-						flusher.Flush()
-					}
-				}
-				if err != nil {
-					return
-				}
-			}
+			writeReverseStream(ctx.Context(), writer, flusher, pending)
 		},
 	}, nil
 }
@@ -465,10 +449,9 @@ func (s *Server) deleteSessionHuma(ctx context.Context, input *sessionPathInput)
 		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
 	}
 
-	target := strings.TrimRight(host.URL, "/") + "/sessions/" + input.LocalID
-	status, raw, err := s.deleteRaw(ctx, target)
+	status, raw, err := s.reverseRequestRaw(ctx, host.HostID, http.MethodDelete, "/sessions/"+input.LocalID, "", nil)
 	if err != nil {
-		return nil, huma.Error502BadGateway(err.Error())
+		return nil, reverseHumaError(err)
 	}
 	if status >= 300 {
 		return nil, newResponseError(status, raw)
@@ -482,10 +465,9 @@ func (s *Server) listRepoRefsHuma(ctx context.Context, input *repoRefsInput) (*r
 		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
 	}
 
-	target := strings.TrimRight(host.URL, "/") + "/repos/" + input.RepoID + "/refs"
-	status, body, err := s.getRaw(ctx, target)
+	status, body, err := s.reverseRequestRaw(ctx, host.HostID, http.MethodGet, "/repos/"+input.RepoID+"/refs", "", nil)
 	if err != nil {
-		return nil, huma.Error502BadGateway(err.Error())
+		return nil, reverseHumaError(err)
 	}
 	if status >= 300 {
 		return nil, newResponseError(status, body)
@@ -498,15 +480,17 @@ func (s *Server) listRepoRefsHuma(ctx context.Context, input *repoRefsInput) (*r
 }
 
 func (s *Server) postAction(ctx context.Context, hostID, localID, suffix string, body any) (*actionEventsOutput, error) {
-	host, ok := s.onlineHost(hostID)
-	if !ok {
+	if _, ok := s.onlineHost(hostID); !ok {
 		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
 	}
 
-	target := strings.TrimRight(host.URL, "/") + "/sessions/" + localID + "/" + suffix
-	status, raw, err := s.postJSONRaw(ctx, target, body)
+	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, huma.Error502BadGateway(err.Error())
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+	status, raw, err := s.reverseRequestRaw(ctx, hostID, http.MethodPost, "/sessions/"+localID+"/"+suffix, "", data)
+	if err != nil {
+		return nil, reverseHumaError(err)
 	}
 	if status >= 300 {
 		return nil, newResponseError(status, raw)
@@ -516,62 +500,6 @@ func (s *Server) postAction(ctx context.Context, hostID, localID, suffix string,
 		return nil, huma.Error502BadGateway(err.Error())
 	}
 	return &actionEventsOutput{Status: status, Body: out}, nil
-}
-
-func (s *Server) postJSONRaw(ctx context.Context, target string, body any) (int, []byte, error) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return 0, nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(data))
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, err
-	}
-	return resp.StatusCode, respBody, nil
-}
-
-func (s *Server) getRaw(ctx context.Context, target string) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return 0, nil, err
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, err
-	}
-	return resp.StatusCode, respBody, nil
-}
-
-func (s *Server) deleteRaw(ctx context.Context, target string) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil)
-	if err != nil {
-		return 0, nil, err
-	}
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, err
-	}
-	return resp.StatusCode, respBody, nil
 }
 
 func newResponseError(status int, body []byte) error {
@@ -584,4 +512,33 @@ func newResponseError(status int, body []byte) error {
 		message = http.StatusText(status)
 	}
 	return huma.NewError(status, message)
+}
+
+func reverseHumaError(err error) error {
+	if errors.Is(err, errReverseUnavailable) {
+		return huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+	return huma.Error502BadGateway(err.Error())
+}
+
+func collectReverseResponse(ctx context.Context, pending *reversePending, status int) (int, []byte, error) {
+	var out bytes.Buffer
+	for {
+		select {
+		case chunk := <-pending.body:
+			_, _ = out.Write(chunk)
+		case done := <-pending.done:
+			drainBody(&out, pending)
+			if done.Type == "response_error" {
+				if done.Status > 0 {
+					return done.Status, errorBody(done.Error), nil
+				}
+				return 0, nil, responseFrameError(done)
+			}
+			return status, out.Bytes(), nil
+		case <-ctx.Done():
+			pending.close(true)
+			return 0, nil, ctx.Err()
+		}
+	}
 }

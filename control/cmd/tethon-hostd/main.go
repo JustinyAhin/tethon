@@ -149,12 +149,6 @@ func run() error {
 		hubURL:        *hubURL,
 		repos:         registerReq.Repos,
 	})
-	go runHubConnectionLoop(ctx, hub, registerReq, hubConnectionConfig{
-		hubURL: *hubURL,
-		logger: logger,
-		status: status,
-	})
-
 	hostServer := server.NewWithConfig(store, server.Config{
 		Agents:    agentRegistry,
 		Repos:     registry,
@@ -165,6 +159,17 @@ func run() error {
 	if err := hostServer.Recover(ctx); err != nil {
 		logger.Error("session_recovery_failed", "error", err.Error())
 	}
+
+	go runHubConnectionLoop(ctx, hub, registerReq, hubConnectionConfig{
+		hubURL: *hubURL,
+		logger: logger,
+		status: status,
+	})
+	go runHubReverseLoop(ctx, hub, registerReq.HostID, hostServer.Handler(), hubReverseConfig{
+		hubURL: *hubURL,
+		logger: logger,
+		status: status,
+	})
 
 	srv := &http.Server{Addr: *addr, Handler: hostDiagnosticHandler(hostServer.Handler(), status)}
 	logger.Info("hostd_serving", "host_id", *hostID, "advertised_url", hostURL, "hub_url", *hubURL)
@@ -248,11 +253,13 @@ type hostStatus struct {
 	startedAt     time.Time
 	now           func() time.Time
 
-	registered     bool
-	retrying       bool
-	lastHubSuccess time.Time
-	lastHubFailure *hubFailure
-	nextRetryDelay time.Duration
+	registered         bool
+	retrying           bool
+	lastHubSuccess     time.Time
+	lastHubFailure     *hubFailure
+	nextRetryDelay     time.Duration
+	reverseConnected   bool
+	lastReverseFailure *hubFailure
 }
 
 type hubFailure struct {
@@ -261,18 +268,20 @@ type hubFailure struct {
 }
 
 type hostStatusResponse struct {
-	Status         string                `json:"status"`
-	HostID         string                `json:"host_id"`
-	AdvertisedURL  string                `json:"advertised_url"`
-	HubURL         string                `json:"hub_url"`
-	RepoCount      int                   `json:"repo_count"`
-	Repos          []hostStatusRepo      `json:"repos"`
-	UptimeSeconds  int64                 `json:"uptime_seconds"`
-	Registered     bool                  `json:"registered"`
-	Retrying       bool                  `json:"retrying"`
-	LastHubSuccess string                `json:"last_hub_success"`
-	LastHubFailure *hostStatusHubFailure `json:"last_hub_failure"`
-	NextRetryDelay string                `json:"next_retry_delay"`
+	Status             string                `json:"status"`
+	HostID             string                `json:"host_id"`
+	AdvertisedURL      string                `json:"advertised_url"`
+	HubURL             string                `json:"hub_url"`
+	RepoCount          int                   `json:"repo_count"`
+	Repos              []hostStatusRepo      `json:"repos"`
+	UptimeSeconds      int64                 `json:"uptime_seconds"`
+	Registered         bool                  `json:"registered"`
+	Retrying           bool                  `json:"retrying"`
+	LastHubSuccess     string                `json:"last_hub_success"`
+	LastHubFailure     *hostStatusHubFailure `json:"last_hub_failure"`
+	NextRetryDelay     string                `json:"next_retry_delay"`
+	ReverseConnected   bool                  `json:"reverse_connected"`
+	LastReverseFailure *hostStatusHubFailure `json:"last_reverse_failure"`
 }
 
 type hostStatusRepo struct {
@@ -337,6 +346,25 @@ func (s *hostStatus) recordHubForgotHost() {
 	s.nextRetryDelay = 0
 }
 
+func (s *hostStatus) recordReverseConnected() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reverseConnected = true
+}
+
+func (s *hostStatus) recordReverseFailure(err error) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reverseConnected = false
+	s.lastReverseFailure = &hubFailure{at: s.now().UTC(), error: err.Error()}
+}
+
 func (s *hostStatus) snapshot() hostStatusResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -347,16 +375,17 @@ func (s *hostStatus) snapshot() hostStatusResponse {
 		repos = append(repos, hostStatusRepo{ID: repo.ID, Name: repo.Name})
 	}
 	resp := hostStatusResponse{
-		Status:         "ok",
-		HostID:         s.hostID,
-		AdvertisedURL:  s.advertisedURL,
-		HubURL:         s.hubURL,
-		RepoCount:      len(s.repos),
-		Repos:          repos,
-		UptimeSeconds:  int64(now.Sub(s.startedAt).Seconds()),
-		Registered:     s.registered,
-		Retrying:       s.retrying,
-		NextRetryDelay: durationString(s.nextRetryDelay),
+		Status:           "ok",
+		HostID:           s.hostID,
+		AdvertisedURL:    s.advertisedURL,
+		HubURL:           s.hubURL,
+		RepoCount:        len(s.repos),
+		Repos:            repos,
+		UptimeSeconds:    int64(now.Sub(s.startedAt).Seconds()),
+		Registered:       s.registered,
+		Retrying:         s.retrying,
+		NextRetryDelay:   durationString(s.nextRetryDelay),
+		ReverseConnected: s.reverseConnected,
 	}
 	if !s.lastHubSuccess.IsZero() {
 		resp.LastHubSuccess = s.lastHubSuccess.Format(time.RFC3339)
@@ -365,6 +394,12 @@ func (s *hostStatus) snapshot() hostStatusResponse {
 		resp.LastHubFailure = &hostStatusHubFailure{
 			At:    s.lastHubFailure.at.Format(time.RFC3339),
 			Error: s.lastHubFailure.error,
+		}
+	}
+	if s.lastReverseFailure != nil {
+		resp.LastReverseFailure = &hostStatusHubFailure{
+			At:    s.lastReverseFailure.at.Format(time.RFC3339),
+			Error: s.lastReverseFailure.error,
 		}
 	}
 	return resp

@@ -404,6 +404,55 @@ func TestIsHTTPStatus(t *testing.T) {
 	}
 }
 
+func TestReverseURL(t *testing.T) {
+	got, err := reverseURL("https://hub.tethon.dev/base", "mac 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "wss://hub.tethon.dev/base/hosts/mac%201/connect" {
+		t.Fatalf("reverseURL = %q", got)
+	}
+}
+
+func TestHubReverseLoopRecordsConnected(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub := newFakeHub()
+	status := newHostStatus(hostStatusConfig{hostID: "mac"})
+	cfg := testHubReverseConfig()
+	cfg.status = status
+
+	go runHubReverseLoop(ctx, hub, "mac", http.NotFoundHandler(), cfg)
+
+	if got := hub.waitCall(t); got != "reverse" {
+		t.Fatalf("call = %q, want reverse", got)
+	}
+	waitForStatus(t, func() bool { return status.snapshot().ReverseConnected })
+}
+
+func TestHubReverseLoopRetriesFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	hub := newFakeHub()
+	hub.reverseErrs = []error{errors.New("dial failed")}
+	status := newHostStatus(hostStatusConfig{hostID: "mac"})
+	cfg := testHubReverseConfig()
+	cfg.status = status
+
+	go runHubReverseLoop(ctx, hub, "mac", http.NotFoundHandler(), cfg)
+
+	if got := hub.waitCall(t); got != "reverse" {
+		t.Fatalf("first call = %q, want reverse", got)
+	}
+	if got := hub.waitCall(t); got != "reverse" {
+		t.Fatalf("second call = %q, want reverse", got)
+	}
+	snapshot := status.snapshot()
+	if !snapshot.ReverseConnected || snapshot.LastReverseFailure == nil || snapshot.LastReverseFailure.Error != "dial failed" {
+		t.Fatalf("unexpected reverse status after retry: %+v", snapshot)
+	}
+}
+
 func getJSON(t *testing.T, target string, out any) {
 	t.Helper()
 	resp, err := http.Get(target)
@@ -440,6 +489,7 @@ type fakeHub struct {
 	mu            sync.Mutex
 	registerErrs  []error
 	heartbeatErrs []error
+	reverseErrs   []error
 	calls         chan string
 }
 
@@ -471,6 +521,23 @@ func (h *fakeHub) heartbeat(_ context.Context, _ string) error {
 	return err
 }
 
+func (h *fakeHub) connectReverse(ctx context.Context, _ string, _ http.Handler, onConnected func()) error {
+	h.calls <- "reverse"
+	h.mu.Lock()
+	if len(h.reverseErrs) > 0 {
+		err := h.reverseErrs[0]
+		h.reverseErrs = h.reverseErrs[1:]
+		h.mu.Unlock()
+		return err
+	}
+	h.mu.Unlock()
+	if onConnected != nil {
+		onConnected()
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func (h *fakeHub) waitCall(t *testing.T) string {
 	t.Helper()
 	select {
@@ -493,6 +560,32 @@ func testHubConnectionConfig() hubConnectionConfig {
 		maxBackoff:        2 * time.Millisecond,
 		jitter:            func(time.Duration) time.Duration { return 0 },
 		logger:            slog.New(slog.NewJSONHandler(newSafeBuffer(), nil)),
+	}
+}
+
+func testHubReverseConfig() hubReverseConfig {
+	return hubReverseConfig{
+		minBackoff: time.Millisecond,
+		maxBackoff: 2 * time.Millisecond,
+		jitter:     func(time.Duration) time.Duration { return 0 },
+		logger:     slog.New(slog.NewJSONHandler(newSafeBuffer(), nil)),
+	}
+}
+
+func waitForStatus(t *testing.T, ok func() bool) {
+	t.Helper()
+	deadline := time.After(time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		if ok() {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for status")
+		case <-tick.C:
+		}
 	}
 }
 

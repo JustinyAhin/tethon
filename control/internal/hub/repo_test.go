@@ -24,6 +24,7 @@ func TestHubRelaysRepoRefs(t *testing.T) {
 	hub := httptest.NewServer(New(time.Second).Handler())
 	t.Cleanup(hub.Close)
 	registerHost(t, hub.URL, protocol.RegisterHostRequest{HostID: "mac", URL: host.URL})
+	connectReverseHost(t, hub.URL, "mac", "", host.Config.Handler)
 
 	var refs protocol.RepoRefsResponse
 	getJSON(t, hub.URL+"/repos/mac/myrepo/refs", &refs)
@@ -48,6 +49,7 @@ func TestHubRelaysRepoRefsNotFound(t *testing.T) {
 	hub := httptest.NewServer(New(time.Second).Handler())
 	t.Cleanup(hub.Close)
 	registerHost(t, hub.URL, protocol.RegisterHostRequest{HostID: "mac", URL: host.URL})
+	connectReverseHost(t, hub.URL, "mac", "", host.Config.Handler)
 
 	resp, err := http.Get(hub.URL + "/repos/mac/nope/refs")
 	if err != nil {
@@ -78,4 +80,25 @@ func TestHubRepoRefsOfflineHostReturns503(t *testing.T) {
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %s", resp.Status)
 	}
+}
+
+func TestHubReverseConnectionReplacementUsesNewestConnection(t *testing.T) {
+	hub := httptest.NewServer(New(time.Second).Handler())
+	t.Cleanup(hub.Close)
+	registerHost(t, hub.URL, protocol.RegisterHostRequest{HostID: "mac", URL: "http://127.0.0.1:1"})
+
+	connectReverseHost(t, hub.URL, "mac", "", repoRefsHandler("old"))
+	connectReverseHost(t, hub.URL, "mac", "", repoRefsHandler("new"))
+
+	var refs protocol.RepoRefsResponse
+	getJSON(t, hub.URL+"/repos/mac/myrepo/refs", &refs)
+	if len(refs.Branches) != 1 || refs.Branches[0] != "new" {
+		t.Fatalf("branches = %v, want newest connection branch", refs.Branches)
+	}
+}
+
+func repoRefsHandler(branch string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, protocol.RepoRefsResponse{Branches: []string{branch}, Tags: []string{}})
+	})
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"tethon/internal/protocol"
+	"tethon/internal/reverse"
 	hostserver "tethon/internal/server"
 	"tethon/internal/sessionlog"
 )
@@ -31,6 +35,7 @@ func TestRegisterAndListHosts(t *testing.T) {
 		Agents:    []string{"fake"},
 		RepoRoots: []string{"."},
 	})
+	connectReverseHost(t, ts.URL, "mac", "", http.NotFoundHandler())
 
 	var resp struct {
 		Hosts []protocol.HostSummary `json:"hosts"`
@@ -82,7 +87,7 @@ func TestHubLogsHostRegistrationWithoutBearerToken(t *testing.T) {
 		`"url":"http://100.64.0.10:39181"`,
 		`"repo_count":2`,
 		`"agent_count":2`,
-		`"online":true`,
+		`"online":false`,
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("logs missing %q: %s", want, raw)
@@ -113,7 +118,7 @@ func TestHubLogsHeartbeatStatus(t *testing.T) {
 		`"msg":"hub_host_heartbeat"`,
 		`"host_id":"mac"`,
 		`"url":"http://100.64.0.10:39181"`,
-		`"online":true`,
+		`"online":false`,
 		`"msg":"hub_host_heartbeat_unknown"`,
 		`"host_id":"missing"`,
 	} {
@@ -176,6 +181,7 @@ func TestHubBearerTokenAllowsSessionLifecycle(t *testing.T) {
 		Agents:    []string{"fake"},
 		RepoRoots: []string{"."},
 	})
+	connectReverseHost(t, hubTS.URL, "mac", "secret", hostTS.Config.Handler)
 
 	session := createSessionAuth(t, hubTS.URL, "secret", protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 	postJSONAuth(t, hubTS.URL+"/sessions/"+session.ID+"/input", "secret", protocol.InputRequest{Text: "continue"})
@@ -194,6 +200,7 @@ func TestHubCreatesSessionAndStreamsReplayThroughHost(t *testing.T) {
 		Agents:    []string{"fake"},
 		RepoRoots: []string{"."},
 	})
+	connectReverseHost(t, hubTS.URL, "mac", "", hostTS.Config.Handler)
 
 	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 	if !strings.HasPrefix(session.ID, "mac/ses_") {
@@ -218,12 +225,14 @@ func TestHubListsSessionsAcrossOnlineHosts(t *testing.T) {
 		URL:    mac.URL,
 		Agents: []string{"fake"},
 	})
+	connectReverseHost(t, hub.URL, "mac", "", mac.Config.Handler)
 	registerHost(t, hub.URL, protocol.RegisterHostRequest{
 		HostID: "vps",
 		Name:   "VPS",
 		URL:    vps.URL,
 		Agents: []string{"fake"},
 	})
+	connectReverseHost(t, hub.URL, "vps", "", vps.Config.Handler)
 
 	done := createSession(t, hub.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 	postJSON(t, hub.URL+"/sessions/"+done.ID+"/input", protocol.InputRequest{Text: "done"})
@@ -257,6 +266,7 @@ func TestHubListSessionsOmitsOfflineHosts(t *testing.T) {
 	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{HostID: "old", URL: "http://127.0.0.1:1"})
 	now = now.Add(2 * time.Second)
 	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{HostID: "mac", URL: host.URL})
+	connectReverseHost(t, hubTS.URL, "mac", "", host.Config.Handler)
 	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 
 	var resp protocol.ListSessionsResponse
@@ -277,14 +287,15 @@ func TestHubListSessionsFailsWhenOnlineHostFanoutFails(t *testing.T) {
 	}))
 	t.Cleanup(badHost.Close)
 	registerHost(t, hub.URL, protocol.RegisterHostRequest{HostID: "bad", URL: badHost.URL})
+	connectReverseHost(t, hub.URL, "bad", "", badHost.Config.Handler)
 
 	resp, err := http.Get(hub.URL + "/sessions")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %s", resp.Status)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %s", resp.Status)
 	}
 }
 
@@ -296,6 +307,7 @@ func TestHubProxiesApprovalResolution(t *testing.T) {
 		URL:    hostTS.URL,
 		Agents: []string{"fake"},
 	})
+	connectReverseHost(t, hubTS.URL, "mac", "", hostTS.Config.Handler)
 
 	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 	startupEvents := streamEvents(t, hubTS.URL, session.ID, 0, 3)
@@ -316,6 +328,7 @@ func TestHubProxiesCancellation(t *testing.T) {
 		URL:    hostTS.URL,
 		Agents: []string{"fake"},
 	})
+	connectReverseHost(t, hubTS.URL, "mac", "", hostTS.Config.Handler)
 
 	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/cancel", map[string]string{})
@@ -333,6 +346,7 @@ func TestHubProxiesSessionDeletion(t *testing.T) {
 		URL:    hostTS.URL,
 		Agents: []string{"fake"},
 	})
+	connectReverseHost(t, hubTS.URL, "mac", "", hostTS.Config.Handler)
 
 	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/input", protocol.InputRequest{Text: "done"})
@@ -356,6 +370,7 @@ func TestHubDeletePropagatesHostConflict(t *testing.T) {
 		URL:    hostTS.URL,
 		Agents: []string{"fake"},
 	})
+	connectReverseHost(t, hubTS.URL, "mac", "", hostTS.Config.Handler)
 
 	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 
@@ -422,6 +437,60 @@ func newHost(t *testing.T) *httptest.Server {
 	return ts
 }
 
+func connectReverseHost(t *testing.T, hubURL, hostID, authToken string, handler http.Handler) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	target := reverseTestURL(t, hubURL, hostID)
+	headers := http.Header{}
+	if authToken != "" {
+		headers.Set("Authorization", "Bearer "+authToken)
+	}
+	conn, _, err := websocket.Dial(ctx, target, &websocket.DialOptions{HTTPHeader: headers})
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = conn.Close(websocket.StatusNormalClosure, "test done")
+	})
+	go func() {
+		if err := reverse.ServeRequests(ctx, conn, handler); err != nil && ctx.Err() == nil {
+			t.Logf("reverse test bridge exited: %v", err)
+		}
+	}()
+	waitForHostOnline(t, hubURL, hostID, authToken)
+}
+
+func reverseTestURL(t *testing.T, hubURL, hostID string) string {
+	t.Helper()
+	switch {
+	case strings.HasPrefix(hubURL, "http://"):
+		return "ws://" + strings.TrimPrefix(hubURL, "http://") + "/hosts/" + hostID + "/connect"
+	case strings.HasPrefix(hubURL, "https://"):
+		return "wss://" + strings.TrimPrefix(hubURL, "https://") + "/hosts/" + hostID + "/connect"
+	default:
+		t.Fatalf("unsupported hub URL %q", hubURL)
+		return ""
+	}
+}
+
+func waitForHostOnline(t *testing.T, hubURL, hostID, authToken string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		var resp protocol.ListHostsResponse
+		getJSONAuth(t, hubURL+"/hosts", authToken, &resp)
+		for _, host := range resp.Hosts {
+			if host.HostID == hostID && host.Online {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for host %q online", hostID)
+}
+
 func registerHost(t *testing.T, hubURL string, req protocol.RegisterHostRequest) {
 	t.Helper()
 	var out protocol.HostSummary
@@ -485,7 +554,8 @@ func postJSONIntoAuth(t *testing.T, url, authToken string, value any, out any) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		t.Fatalf("POST %s returned %s", url, resp.Status)
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("POST %s returned %s: %s", url, resp.Status, strings.TrimSpace(string(body)))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		t.Fatal(err)
@@ -513,7 +583,19 @@ func assertStatus(t *testing.T, method, target, authToken string, want int) {
 
 func getJSON(t *testing.T, url string, out any) {
 	t.Helper()
-	resp, err := http.Get(url)
+	getJSONAuth(t, url, "", out)
+}
+
+func getJSONAuth(t *testing.T, url, authToken string, out any) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

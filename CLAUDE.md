@@ -15,7 +15,7 @@ The repo now has the first working control-plane slices:
 - `scripts/` — operational scripts, currently macOS host daemon install/run and Beads backup.
 - `kb/` — design brief, roadmap, runbooks, research notes, and known limitations. Read `kb/agent-control-design.md` before architectural changes, but treat it as target design unless it explicitly says "current".
 
-Current routing caveat: the host daemon registers and heartbeats outbound, but the hub still calls the registered host daemon URL for session operations. Until host-initiated persistent hub connections land, the VPS hub must be able to reach each `tethon-hostd` URL.
+Current routing: the host daemon registers outbound and keeps a host-initiated WebSocket open to the hub for session operations. The hub no longer needs inbound network reachability to each `tethon-hostd` listener.
 
 ## Working Principles
 

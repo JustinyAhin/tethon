@@ -5,10 +5,10 @@
 This is the target architecture and product bar. It is not a complete description
 of what the current code does.
 
-Current prototype caveat: `tethon-hostd` registers and heartbeats outbound to
-the hub, but session routing still works by the hub calling the host daemon URL
-that the host registered. Until host-initiated persistent session connections
-land, the hub machine must be able to reach each host daemon URL directly.
+Current implementation note: `tethon-hostd` registers outbound and keeps a
+host-initiated WebSocket open to the hub. Session operations are multiplexed
+over that outbound connection, so the hub does not need inbound reachability to
+the host daemon listener.
 
 ## What we're building
 
@@ -33,8 +33,8 @@ The point is not a 1:1 remote desktop. It's a purpose-built, best-in-class *agen
 - **Transport: host-initiated outbound to a hub.** Tailscale available for bulk data (file pulls, heavy log streaming), but the control plane does not depend on it.
 - **Interface model: structured-first, TUI as escape hatch.** Daemon emits structured events; a raw PTY is available on demand to the same working dir.
 
-Implementation note: the first runnable slice intentionally uses HTTP/SSE and a
-registered host URL before the persistent outbound tunnel. See
+Implementation note: client-facing hub routes still use HTTP/SSE, while
+hub-to-host session operations ride over the host-initiated WebSocket. See
 `kb/known-limitations.md`.
 
 ## Architecture
