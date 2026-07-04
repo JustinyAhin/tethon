@@ -11,6 +11,8 @@ import {
 } from '@tethon/hub-sdk/protocol';
 import type { Event as ProtocolEvent } from '@tethon/hub-sdk/protocol';
 
+export type ApprovalAction = 'approve' | 'deny' | 'reply';
+
 export type SessionEventType =
   | typeof EventSessionStarted
   | typeof EventOutput
@@ -43,11 +45,13 @@ export type {
   ApprovalResolvedPayload,
   DonePayload,
   ErrorPayload,
+  InputRequest,
   InputReceivedPayload,
   RepoInfo,
   HostSummary,
   ListHostsResponse,
   OutputPayload,
+  ResolveApprovalRequest,
   SessionSummary,
   SessionStartedPayload,
   ListSessionsResponse,

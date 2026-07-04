@@ -1,5 +1,9 @@
 import { getCredentials, type HubCredentials } from '@/lib/hub/credentials';
-import type { ListHostsResponse, ListSessionsResponse } from '@/lib/hub/types';
+import type {
+  InputRequest,
+  ListHostsResponse,
+  ListSessionsResponse,
+} from '@/lib/hub/types';
 
 const requestTimeoutMs = 10_000;
 
@@ -134,6 +138,27 @@ export const cancelSession = async ({
   await hubFetch({
     path: `/sessions/${encodeURIComponent(hostId)}/${encodeURIComponent(localId)}/cancel`,
     init: { method: 'POST' },
+  });
+};
+
+export const sendInput = async ({
+  hostId,
+  localId,
+  text,
+}: {
+  hostId: string;
+  localId: string;
+  text: string;
+}): Promise<void> => {
+  const body = { text } satisfies InputRequest;
+
+  await hubFetch({
+    path: `/sessions/${encodeURIComponent(hostId)}/${encodeURIComponent(localId)}/input`,
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
   });
 };
 

@@ -3,8 +3,10 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  KeyboardAvoidingView,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -13,6 +15,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SessionInputBar } from '@/components/session-input-bar';
 import { SessionEventCard } from '@/components/session-event-card';
 import { StatusPill } from '@/components/status-pill';
 import {
@@ -295,7 +298,10 @@ const SessionDetailContent = ({
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <KeyboardAvoidingView
+        behavior={Platform.select({ ios: 'padding', default: undefined })}
+        style={styles.container}
+      >
         <FlatList
           ref={listRef}
           contentContainerStyle={styles.listContent}
@@ -319,8 +325,16 @@ const SessionDetailContent = ({
           style={styles.container}
           windowSize={9}
         />
-        {/* tethon-927.4: input bar mounts below the list */}
-      </View>
+        {streamStatus === 'finished' ? (
+          <Text style={styles.finishedText}>Session finished.</Text>
+        ) : (
+          <SessionInputBar
+            hostId={hostId}
+            localId={localId}
+            onFocusInput={scrollToTailIfPinned}
+          />
+        )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -502,6 +516,16 @@ const styles = StyleSheet.create({
     color: '#5c6873',
     fontSize: 15,
     paddingVertical: 20,
+    textAlign: 'center',
+  },
+  finishedText: {
+    borderTopColor: '#dce3ea',
+    borderTopWidth: 1,
+    backgroundColor: '#ffffff',
+    color: '#5c6873',
+    fontSize: 13,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     textAlign: 'center',
   },
   streamChip: {
