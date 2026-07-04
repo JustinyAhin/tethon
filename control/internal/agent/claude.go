@@ -744,10 +744,7 @@ func (s *claudeSession) handleClaudeEvent(ctx context.Context, event claudeStrea
 			*emittedOutput = true
 		}
 	case "rate_limit_event":
-		if _, err := s.sink.AppendEvent(ctx, protocol.EventOutput, protocol.OutputPayload{Text: "claude rate limit event received"}); err != nil {
-			return claudeTurnContinue, err
-		}
-		*emittedOutput = true
+		return claudeTurnContinue, nil
 	}
 	return claudeTurnContinue, nil
 }

@@ -50,6 +50,35 @@ func TestClaudeStartMapsAssistantOutput(t *testing.T) {
 	}
 }
 
+func TestClaudeRateLimitEventDoesNotEmitOutputOrMaskResultFallback(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"system","subtype":"init","session_id":"claude_1"}` + "\n" +
+			`{"type":"rate_limit_event","session_id":"claude_1"}` + "\n" +
+			`{"type":"result","is_error":false,"session_id":"claude_1","result":"final answer"}` + "\n",
+	}}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "say hello"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink.waitForInactive(t, running)
+
+	outputs := sink.outputTexts()
+	if len(outputs) != 1 || outputs[0] != "final answer" {
+		t.Fatalf("outputs = %#v, want only final answer", outputs)
+	}
+	for _, output := range outputs {
+		if output == "claude rate limit event received" {
+			t.Fatalf("rate limit event leaked as output: %#v", outputs)
+		}
+	}
+}
+
 func TestClaudeStartPassesExplicitPermissionMode(t *testing.T) {
 	runner := &fakeCommandRunner{outputs: []string{
 		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n",
@@ -903,6 +932,22 @@ func (s *memorySink) eventOfType(eventType string) (protocol.Event, bool) {
 		}
 	}
 	return protocol.Event{}, false
+}
+
+func (s *memorySink) outputTexts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var texts []string
+	for _, event := range s.events {
+		if event.Type != protocol.EventOutput {
+			continue
+		}
+		var payload protocol.OutputPayload
+		if err := json.Unmarshal(event.Payload, &payload); err == nil {
+			texts = append(texts, payload.Text)
+		}
+	}
+	return texts
 }
 
 func (s *memorySink) waitForText(t *testing.T, text string) {
