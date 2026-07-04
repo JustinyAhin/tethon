@@ -510,6 +510,10 @@ func (serverFakeProcess) Kill() error {
 	return nil
 }
 
+func (serverFakeProcess) Identity() agent.ProcessIdentity {
+	return agent.ProcessIdentity{}
+}
+
 func postSession(t *testing.T, baseURL string) protocol.CreateSessionResponse {
 	t.Helper()
 	var resp protocol.CreateSessionResponse

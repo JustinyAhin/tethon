@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"sort"
+	"time"
 
 	"tethon/internal/protocol"
 )
@@ -39,6 +40,15 @@ type RunningSession interface {
 	ResolveApproval(context.Context, string, string, string) ([]protocol.Event, error)
 	Cancel(context.Context) ([]protocol.Event, error)
 	Terminal() bool
+	ProcessIdentity() ProcessIdentity
+}
+
+type ProcessIdentity struct {
+	PID              int
+	PGID             int
+	StartedAt        time.Time
+	Executable       string
+	OwnsProcessGroup bool
 }
 
 type Sink interface {

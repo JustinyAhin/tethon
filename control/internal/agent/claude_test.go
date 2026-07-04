@@ -498,6 +498,40 @@ func TestClaudeCancelHardKillsIgnoredInterrupt(t *testing.T) {
 	}
 }
 
+func TestClaudeProcessIdentityTracksActiveTurn(t *testing.T) {
+	want := ProcessIdentity{
+		PID:              1234,
+		PGID:             1234,
+		StartedAt:        time.Unix(1, 0).UTC(),
+		Executable:       "/bin/claude",
+		OwnsProcessGroup: true,
+	}
+	process := newBlockingProcess()
+	process.identity = want
+	process.interruptReleases = true
+	runner := &singleProcessRunner{process: process}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, KillDelay: 20 * time.Millisecond})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create:  protocol.CreateSessionRequest{Repo: ".", Agent: "claude-cli", Prompt: "wait"},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := running.ProcessIdentity(); got != want {
+		t.Fatalf("process identity = %+v, want %+v", got, want)
+	}
+	if _, err := running.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := running.ProcessIdentity(); got != (ProcessIdentity{}) {
+		t.Fatalf("process identity after cancel = %+v, want empty", got)
+	}
+}
+
 func TestClaudeInputWhileRunningReturnsBusy(t *testing.T) {
 	process := newBlockingProcess()
 	process.interruptReleases = true
@@ -737,8 +771,9 @@ func argAfter(t *testing.T, args []string, name string) string {
 }
 
 type fakeProcess struct {
-	stdout io.Reader
-	stderr io.Reader
+	stdout   io.Reader
+	stderr   io.Reader
+	identity ProcessIdentity
 }
 
 func (p fakeProcess) Stdout() io.Reader {
@@ -761,6 +796,10 @@ func (fakeProcess) Kill() error {
 	return nil
 }
 
+func (p fakeProcess) Identity() ProcessIdentity {
+	return p.identity
+}
+
 type singleProcessRunner struct {
 	process *blockingProcess
 }
@@ -770,8 +809,9 @@ func (r *singleProcessRunner) Start(context.Context, CommandSpec) (CommandProces
 }
 
 type blockingProcess struct {
-	stdout io.Reader
-	stderr io.Reader
+	stdout   io.Reader
+	stderr   io.Reader
+	identity ProcessIdentity
 
 	waitErr           error
 	interruptReleases bool
@@ -825,6 +865,10 @@ func (p *blockingProcess) Kill() error {
 		p.release()
 	}
 	return nil
+}
+
+func (p *blockingProcess) Identity() ProcessIdentity {
+	return p.identity
 }
 
 func (p *blockingProcess) release() {

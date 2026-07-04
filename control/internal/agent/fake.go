@@ -133,6 +133,10 @@ func (s *fakeSession) Terminal() bool {
 	return s.terminal
 }
 
+func (s *fakeSession) ProcessIdentity() ProcessIdentity {
+	return ProcessIdentity{}
+}
+
 func (s *fakeSession) setTerminal() {
 	s.mu.Lock()
 	s.terminal = true

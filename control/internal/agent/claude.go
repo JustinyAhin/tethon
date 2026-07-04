@@ -51,6 +51,7 @@ type CommandProcess interface {
 	Wait() error
 	Interrupt() error
 	Kill() error
+	Identity() ProcessIdentity
 }
 
 type execRunner struct{}
@@ -64,6 +65,7 @@ func (execRunner) Start(ctx context.Context, spec CommandSpec) (CommandProcess, 
 	if len(spec.Env) > 0 {
 		cmd.Env = mergeEnv(os.Environ(), spec.Env)
 	}
+	configureOwnedProcessGroup(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -76,13 +78,23 @@ func (execRunner) Start(ctx context.Context, spec CommandSpec) (CommandProcess, 
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &execProcess{cmd: cmd, stdout: stdout, stderr: stderr}, nil
+	identity := ProcessIdentity{
+		PID:        cmd.Process.Pid,
+		StartedAt:  time.Now().UTC(),
+		Executable: cmd.Path,
+	}
+	if pgid, err := processGroupID(cmd.Process.Pid); err == nil {
+		identity.PGID = pgid
+		identity.OwnsProcessGroup = processOwnsGroup(cmd.Process.Pid, pgid)
+	}
+	return &execProcess{cmd: cmd, stdout: stdout, stderr: stderr, identity: identity}, nil
 }
 
 type execProcess struct {
-	cmd    *exec.Cmd
-	stdout io.Reader
-	stderr io.Reader
+	cmd      *exec.Cmd
+	stdout   io.Reader
+	stderr   io.Reader
+	identity ProcessIdentity
 }
 
 func (p *execProcess) Stdout() io.Reader {
@@ -101,6 +113,14 @@ func (p *execProcess) Interrupt() error {
 	if p.cmd.Process == nil {
 		return nil
 	}
+	if p.identity.OwnsProcessGroup && p.identity.PGID > 0 {
+		if err := signalProcessGroup(p.identity.PGID, os.Interrupt); err == nil {
+			return nil
+		} else if processErr := p.cmd.Process.Signal(os.Interrupt); processErr != nil {
+			return errors.Join(err, processErr)
+		}
+		return nil
+	}
 	return p.cmd.Process.Signal(os.Interrupt)
 }
 
@@ -108,7 +128,19 @@ func (p *execProcess) Kill() error {
 	if p.cmd.Process == nil {
 		return nil
 	}
+	if p.identity.OwnsProcessGroup && p.identity.PGID > 0 {
+		if err := killProcessGroup(p.identity.PGID); err == nil {
+			return nil
+		} else if processErr := p.cmd.Process.Kill(); processErr != nil {
+			return errors.Join(err, processErr)
+		}
+		return nil
+	}
 	return p.cmd.Process.Kill()
+}
+
+func (p *execProcess) Identity() ProcessIdentity {
+	return p.identity
 }
 
 type claudeAdapter struct {
@@ -334,6 +366,15 @@ func (s *claudeSession) Terminal() bool {
 	return s.terminal
 }
 
+func (s *claudeSession) ProcessIdentity() ProcessIdentity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.process == nil {
+		return ProcessIdentity{}
+	}
+	return s.process.Identity()
+}
+
 func (s *claudeSession) checkCanStart() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -408,6 +449,8 @@ func (s *claudeSession) startTurn(ctx context.Context, prompt string, hook claud
 		s.adapter.logger.Error("agent_process_start_failed", "agent", "claude-cli", "session_id", s.sessionID, "cwd", s.workDir, "error", err.Error())
 		return err
 	}
+	identity := process.Identity()
+	s.adapter.logger.Info("agent_process_started", "agent", "claude-cli", "session_id", s.sessionID, "pid", identity.PID, "pgid", identity.PGID, "executable", identity.Executable, "owns_process_group", identity.OwnsProcessGroup)
 
 	done := make(chan struct{})
 	s.mu.Lock()
