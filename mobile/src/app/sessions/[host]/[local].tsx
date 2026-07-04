@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -11,6 +13,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SessionEventCard } from '@/components/session-event-card';
 import { StatusPill } from '@/components/status-pill';
 import {
   cancelSession,
@@ -19,11 +22,16 @@ import {
   HubRequestError,
 } from '@/lib/hub/client';
 import { useAuth } from '@/lib/hub/auth-context';
+import {
+  EventApprovalResolved,
+  type ApprovalResolvedPayload,
+  type SessionEvent,
+  type SessionSummary,
+} from '@/lib/hub/types';
+import { useSessionStream } from '@/lib/hub/use-session-stream';
 import { useSessions } from '@/lib/hub/use-sessions';
 
 export default function SessionDetail() {
-  const router = useRouter();
-  const { invalidate } = useAuth();
   const { host, local } = useLocalSearchParams<{
     host: string;
     local: string;
@@ -36,8 +44,88 @@ export default function SessionDetail() {
     () => sessions.find((candidate) => candidate.id === id),
     [id, sessions],
   );
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centerState}>
+          <ActivityIndicator />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (error !== null && session === undefined) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centerState}>
+          <Text style={styles.error}>{error}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (session === undefined) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centerState}>
+          <Text style={styles.emptyText}>Session not found.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SessionDetailContent
+      hostId={hostId}
+      key={id}
+      listError={error}
+      localId={localId}
+      refresh={refresh}
+      session={session}
+    />
+  );
+}
+
+const SessionDetailContent = ({
+  hostId,
+  listError,
+  localId,
+  refresh,
+  session,
+}: {
+  hostId: string;
+  listError: string | null;
+  localId: string;
+  refresh: () => Promise<void>;
+  session: SessionSummary;
+}) => {
+  const router = useRouter();
+  const { invalidate } = useAuth();
   const [busyAction, setBusyAction] = useState<'stop' | 'delete' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const { events, status: streamStatus, streamError } = useSessionStream({
+    hostId,
+    localId,
+  });
+  const listRef = useRef<FlatList<SessionEvent>>(null);
+  const atBottomRef = useRef(true);
+  const isActive =
+    session.status === 'running' || session.status === 'awaiting_approval';
+  const resolvedApprovals = useMemo(() => {
+    const resolved: Record<string, ApprovalResolvedPayload> = {};
+
+    for (const event of events) {
+      if (event.type !== EventApprovalResolved) {
+        continue;
+      }
+
+      const payload = event.payload as ApprovalResolvedPayload;
+      resolved[payload.request_id] = payload;
+    }
+
+    return resolved;
+  }, [events]);
 
   const stop = async () => {
     setBusyAction('stop');
@@ -99,127 +187,173 @@ export default function SessionDetail() {
     );
   };
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.centerState}>
-          <ActivityIndicator />
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const {
+      contentOffset,
+      contentSize,
+      layoutMeasurement,
+    } = event.nativeEvent;
+    const distanceToEnd =
+      contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    atBottomRef.current = distanceToEnd < 80;
+  };
 
-  if (error !== null && session === undefined) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.centerState}>
-          <Text style={styles.error}>{error}</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const scrollToTailIfPinned = () => {
+    if (!atBottomRef.current) {
+      return;
+    }
 
-  if (session === undefined) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.centerState}>
-          <Text style={styles.emptyText}>Session not found.</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated: false });
+    });
+  };
 
-  const isActive =
-    session.status === 'running' || session.status === 'awaiting_approval';
+  const header = (
+    <View style={styles.headerStack}>
+      <View style={styles.headerBlock}>
+        <View style={styles.titleRow}>
+          <View style={styles.titleBlock}>
+            <Text style={styles.title}>
+              {session.repo || session.repo_id || session.id}
+            </Text>
+            <Text style={styles.sessionId}>{session.id}</Text>
+          </View>
+          <StatusPill status={session.status} />
+        </View>
+
+        <View style={styles.meta}>
+          <MetaRow label="host" value={`${hostId} · ${session.agent}`} />
+          <MetaRow label="branch" value={session.branch || '-'} />
+          <MetaRow label="cwd" value={session.cwd || '-'} />
+          <MetaRow
+            label="created"
+            value={new Date(session.created_at).toLocaleString()}
+          />
+        </View>
+      </View>
+
+      {listError !== null ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{listError}</Text>
+        </View>
+      ) : null}
+
+      {actionError !== null ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{actionError}</Text>
+        </View>
+      ) : null}
+
+      {streamError !== null ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>Stream error: {streamError}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.actions}>
+        <StreamStatusChip status={streamStatus} />
+        {isActive ? (
+          <Pressable
+            disabled={busyAction !== null}
+            onPress={() => {
+              void stop();
+            }}
+            style={({ pressed }) => [
+              styles.button,
+              styles.stopButton,
+              busyAction !== null && styles.buttonDisabled,
+              pressed && styles.buttonPressed,
+            ]}
+          >
+            {busyAction === 'stop' ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <Text style={styles.stopButtonText}>Stop</Text>
+            )}
+          </Pressable>
+        ) : (
+          <Pressable
+            disabled={busyAction !== null}
+            onPress={confirmDelete}
+            style={({ pressed }) => [
+              styles.button,
+              styles.deleteButton,
+              busyAction !== null && styles.buttonDisabled,
+              pressed && styles.buttonPressed,
+            ]}
+          >
+            {busyAction === 'delete' ? (
+              <ActivityIndicator color="#b42318" />
+            ) : (
+              <Text style={styles.deleteButtonText}>Delete</Text>
+            )}
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        style={styles.container}
-      >
-        <View style={styles.headerBlock}>
-          <View style={styles.titleRow}>
-            <View style={styles.titleBlock}>
-              <Text style={styles.title}>
-                {session.repo || session.repo_id || session.id}
-              </Text>
-              <Text style={styles.sessionId}>{session.id}</Text>
-            </View>
-            <StatusPill status={session.status} />
-          </View>
-
-          <View style={styles.meta}>
-            <MetaRow label="host" value={`${hostId} · ${session.agent}`} />
-            <MetaRow label="branch" value={session.branch || '-'} />
-            <MetaRow label="cwd" value={session.cwd || '-'} />
-            <MetaRow
-              label="created"
-              value={new Date(session.created_at).toLocaleString()}
+      <View style={styles.container}>
+        <FlatList
+          ref={listRef}
+          contentContainerStyle={styles.listContent}
+          data={events}
+          initialNumToRender={18}
+          keyExtractor={(event) => String(event.seq)}
+          ListEmptyComponent={
+            <Text style={styles.emptyStreamText}>Waiting for events...</Text>
+          }
+          ListHeaderComponent={header}
+          onContentSizeChange={scrollToTailIfPinned}
+          onScroll={onScroll}
+          renderItem={({ item }) => (
+            <SessionEventCard
+              event={item}
+              resolvedApprovals={resolvedApprovals}
             />
-          </View>
-        </View>
-
-        {error !== null ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>{error}</Text>
-          </View>
-        ) : null}
-
-        {actionError !== null ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>{actionError}</Text>
-          </View>
-        ) : null}
-
-        <View style={styles.actions}>
-          {isActive ? (
-            <Pressable
-              disabled={busyAction !== null}
-              onPress={() => {
-                void stop();
-              }}
-              style={({ pressed }) => [
-                styles.button,
-                styles.stopButton,
-                busyAction !== null && styles.buttonDisabled,
-                pressed && styles.buttonPressed,
-              ]}
-            >
-              {busyAction === 'stop' ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.stopButtonText}>Stop</Text>
-              )}
-            </Pressable>
-          ) : (
-            <Pressable
-              disabled={busyAction !== null}
-              onPress={confirmDelete}
-              style={({ pressed }) => [
-                styles.button,
-                styles.deleteButton,
-                busyAction !== null && styles.buttonDisabled,
-                pressed && styles.buttonPressed,
-              ]}
-            >
-              {busyAction === 'delete' ? (
-                <ActivityIndicator color="#b42318" />
-              ) : (
-                <Text style={styles.deleteButtonText}>Delete</Text>
-              )}
-            </Pressable>
           )}
-        </View>
-
-        {/* tethon-927.3: stream mounts here; 927.4 input bar below */}
-        <View style={styles.streamSurface}>
-          <Text style={styles.streamText}>Event stream coming in a later update</Text>
-        </View>
-      </ScrollView>
+          scrollEventThrottle={80}
+          showsVerticalScrollIndicator={false}
+          style={styles.container}
+          windowSize={9}
+        />
+        {/* tethon-927.4: input bar mounts below the list */}
+      </View>
     </SafeAreaView>
   );
-}
+};
+
+const StreamStatusChip = ({
+  status,
+}: {
+  status: 'connecting' | 'live' | 'finished' | 'error';
+}) => (
+  <View
+    style={[
+      styles.streamChip,
+      status === 'live'
+        ? styles.streamChipLive
+        : status === 'error'
+          ? styles.streamChipError
+          : styles.streamChipNeutral,
+    ]}
+  >
+    <Text
+      style={[
+        styles.streamChipText,
+        status === 'live'
+          ? styles.streamChipLiveText
+          : status === 'error'
+            ? styles.streamChipErrorText
+            : styles.streamChipNeutralText,
+      ]}
+    >
+      {status}
+    </Text>
+  </View>
+);
 
 const MetaRow = ({ label, value }: { label: string; value: string }) => (
   <View style={styles.metaRow}>
@@ -248,9 +382,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  scrollContent: {
-    flexGrow: 1,
-    gap: 16,
+  listContent: {
+    gap: 8,
     padding: 20,
   },
   centerState: {
@@ -271,6 +404,10 @@ const styles = StyleSheet.create({
   },
   headerBlock: {
     gap: 16,
+  },
+  headerStack: {
+    gap: 16,
+    paddingBottom: 8,
   },
   titleRow: {
     flexDirection: 'row',
@@ -324,7 +461,10 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   actions: {
+    alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
   },
   button: {
     minHeight: 44,
@@ -358,20 +498,38 @@ const styles = StyleSheet.create({
   buttonPressed: {
     opacity: 0.8,
   },
-  streamSurface: {
-    flex: 1,
-    minHeight: 260,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderColor: '#dce3ea',
-    borderRadius: 8,
-    borderWidth: 1,
-    backgroundColor: '#ffffff',
-    padding: 20,
-  },
-  streamText: {
+  emptyStreamText: {
     color: '#5c6873',
     fontSize: 15,
+    paddingVertical: 20,
     textAlign: 'center',
+  },
+  streamChip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  streamChipLive: {
+    backgroundColor: '#e7f6ed',
+  },
+  streamChipError: {
+    backgroundColor: '#fbeae9',
+  },
+  streamChipNeutral: {
+    backgroundColor: '#f1f3f5',
+  },
+  streamChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  streamChipLiveText: {
+    color: '#087443',
+  },
+  streamChipErrorText: {
+    color: '#b42318',
+  },
+  streamChipNeutralText: {
+    color: '#5c6873',
   },
 });
