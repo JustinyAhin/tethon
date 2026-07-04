@@ -1,0 +1,8 @@
+{
+	"private": true,
+	"workspaces": ["web", "mobile", "packages/*"],
+	"scripts": {
+		"gen:protocol": "bun run --cwd packages/hub-sdk gen:protocol",
+		"gen:hub-sdk": "bun run --cwd packages/hub-sdk gen:hub-sdk"
+	}
+}

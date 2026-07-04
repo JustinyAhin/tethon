@@ -4,5 +4,5 @@ type_mappings:
 
 packages:
   - path: "tethon/internal/protocol"
-    output_path: "../web/src/lib/generated/protocol.ts"
+    output_path: "../packages/hub-sdk/src/protocol.ts"
     indent: "\t"

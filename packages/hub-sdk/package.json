@@ -1,0 +1,19 @@
+{
+	"name": "@tethon/hub-sdk",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./protocol": "./src/protocol.ts",
+		"./hub-openapi": "./src/hub-openapi.ts"
+	},
+	"scripts": {
+		"gen:protocol": "cd ../../control && go run github.com/gzuidhof/tygo@v0.2.21 generate && cd ../packages/hub-sdk && prettier --write src/protocol.ts",
+		"gen:hub-openapi": "cd ../../control && go run ./cmd/tethon-openapi -output ../packages/hub-sdk/hub.openapi.json",
+		"gen:hub-sdk": "bun run gen:hub-openapi && bunx openapi-typescript hub.openapi.json -o src/hub-openapi.ts && prettier --write hub.openapi.json src/hub-openapi.ts"
+	},
+	"devDependencies": {
+		"openapi-typescript": "^7.13.0",
+		"prettier": "^3.8.3",
+		"typescript": "^6.0.3"
+	}
+}

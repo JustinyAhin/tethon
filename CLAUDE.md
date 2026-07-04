@@ -43,8 +43,9 @@ user exactly which runtime still needs restarting or redeploying.
   `TETHON_HUB_AUTH_TOKEN=dummy docker compose -f deploy/hub/docker-compose.yml config`,
   then tell the user to redeploy the hub in Dokploy.
 - `web/` changed: run `bun lint` and `bun check` from `web/`; if hub API shape
-  changed, run `bun run gen:hub-sdk`; tell the user the Worker must be deployed
-  or promoted for `web.tethon.dev` to change.
+  changed, run `bun run gen:hub-sdk` from the repo root. Protocol or hub shape
+  changes also need `bunx tsc --noEmit` from `mobile/`. Tell the user the Worker
+  must be deployed or promoted for `web.tethon.dev` to change.
 - Docs-only changes need no runtime restart or deploy.
 
 Never claim a local/deployed runtime has changed just because code was committed.

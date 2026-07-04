@@ -12,10 +12,7 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
-		"gen": "wrangler types",
-		"gen:protocol": "cd ../control && go run github.com/gzuidhof/tygo@v0.2.21 generate && cd ../web && prettier --write src/lib/generated/protocol.ts src/lib/types.ts",
-		"gen:hub-openapi": "cd ../control && go run ./cmd/tethon-openapi -output ../web/src/lib/generated/hub.openapi.json",
-		"gen:hub-sdk": "bun run gen:hub-openapi && bunx openapi-typescript src/lib/generated/hub.openapi.json -o src/lib/generated/hub-openapi.ts && prettier --write src/lib/generated/hub.openapi.json src/lib/generated/hub-openapi.ts src/lib/server/hub-client.ts"
+		"gen": "wrangler types"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
@@ -29,7 +26,6 @@
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.19.0",
 		"globals": "^17.6.0",
-		"openapi-typescript": "^7.13.0",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^4.1.0",
 		"prettier-plugin-tailwindcss": "^0.8.0",
@@ -42,6 +38,7 @@
 		"wrangler": "^4.97.0"
 	},
 	"dependencies": {
+		"@tethon/hub-sdk": "workspace:*",
 		"jose": "^6.2.3",
 		"markdown-it": "^14.2.0",
 		"openapi-fetch": "^0.17.0",

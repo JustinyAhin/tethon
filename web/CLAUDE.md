@@ -6,7 +6,7 @@ General repo rules (git, commit tags, issue tracking, working principles, never 
 
 ## Tech Stack
 
-- **Package manager / runtime**: Bun (not npm/pnpm/yarn).
+- **Package manager / runtime**: Bun (not npm/pnpm/yarn). Install dependencies from the repo root with `bun install`.
 - **Framework**: SvelteKit 2, **Svelte 5 with runes** (runes are forced on for project code — use `$state`/`$derived`/`$props`, not Svelte 4 reactive syntax).
 - **Deploy target**: Cloudflare Workers via `@sveltejs/adapter-cloudflare`; `wrangler` for types, preview, and deploy.
 - **Styling**: Tailwind CSS 4 — via the `@tailwindcss/vite` plugin, imported in `src/routes/layout.css` (`@import 'tailwindcss'`). No `tailwind.config` file; configure with `@theme` in CSS. `prettier-plugin-tailwindcss` sorts class lists on format.
@@ -38,7 +38,7 @@ When you need Svelte or SvelteKit docs, use the LLM-optimized versions:
 
 - Use direct `export const` for route exports (`load`, `entries`, `prerender`, etc.) — these must be inline named exports, so they're exempt from the exports-at-end rule. Don't add explicit `$types` annotations unless the code genuinely needs them.
 - Prefer **remote functions** (`.remote.ts`) for client–server communication: `query` (read), `form` (form submit with progressive enhancement), `command` (write without a form). Place them in `src/lib/remote-functions/` and import via the `$lib` alias.
-- Hub HTTP calls should go through **`src/lib/server/hub-client.ts`**, which wraps the generated OpenAPI client. Avoid raw `fetch` to the hub in remote functions unless the generated SDK cannot express the behavior, such as the typed SSE stream helper.
+- Hub HTTP calls should go through **`src/lib/server/hub-client.ts`**, which wraps the generated OpenAPI types from `@tethon/hub-sdk/hub-openapi`. Protocol types and constants come from `@tethon/hub-sdk/protocol`. Avoid raw `fetch` to the hub in remote functions unless the generated SDK cannot express the behavior, such as the typed SSE stream helper.
 - Reserve `+server.ts` API routes for things remote functions can't do: webhooks, non-browser clients, third-party callbacks.
 - Name component files in kebab-case (e.g. `host-card.svelte`, not `HostCard.svelte`); import them under a PascalCase identifier.
 - The hub is the source of truth for session state — the web app reads/relays it, it does not own it. Mirror the protocol invariants in `../control/CLAUDE.md` (append-only events, cursor replay, reconnect-with-last-cursor); don't invent client-side state that diverges from the event log.
@@ -62,9 +62,9 @@ bun lint                     # prettier --check + eslint
 bun check                    # wrangler types + svelte-check (the type check)
 ```
 
-If `../control/internal/protocol` changes any JSON-facing type, event payload, request/response shape, or exported protocol constant, also run `bun run gen:protocol` before `bun check`.
+Generated hub artifacts live in `../packages/hub-sdk`, not under `src/lib/`. If `../control/internal/protocol` changes any JSON-facing type, event payload, request/response shape, or exported protocol constant, also run `bun run gen:protocol` from the repo root before `bun check`.
 
-If `../control/internal/hub` changes any client-facing hub route, request/response shape, path/query parameter, status behavior, or OpenAPI metadata, also run `bun run gen:hub-sdk` before `bun check`.
+If `../control/internal/hub` changes any client-facing hub route, request/response shape, path/query parameter, status behavior, or OpenAPI metadata, also run `bun run gen:hub-sdk` from the repo root before `bun check`.
 
 `bun check` is the type check — it runs `svelte-check` against `tsconfig.json` plus `wrangler types`. If you start `bun dev` while working, kill it before finishing.
 
@@ -75,8 +75,8 @@ bun dev        # dev server
 bun build      # production build (wrangler types --check && vite build)
 bun preview    # preview the built Worker locally
 bun gen        # regenerate Cloudflare Worker types (after editing wrangler.toml)
-bun gen:protocol # regenerate TS protocol types from ../control/internal/protocol
-bun gen:hub-sdk # regenerate Hub OpenAPI JSON and TypeScript SDK types
+bun gen:protocol # from repo root: regenerate TS protocol types in ../packages/hub-sdk
+bun gen:hub-sdk # from repo root: regenerate Hub OpenAPI JSON and TypeScript SDK types
 bun check      # svelte-check + wrangler types
 bun lint       # prettier + eslint checks
 bun format     # prettier write

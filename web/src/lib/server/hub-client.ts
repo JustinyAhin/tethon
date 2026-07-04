@@ -1,6 +1,6 @@
 import { HUB_AUTH_TOKEN } from '$app/env/private';
 import createClient from 'openapi-fetch';
-import type { paths, components } from '$lib/generated/hub-openapi';
+import type { paths, components } from '@tethon/hub-sdk/hub-openapi';
 import type { HostSummary, SessionSummary } from '$lib/types';
 
 type HubErrorBody = components['schemas']['HubStatusError'];

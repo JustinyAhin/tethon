@@ -8,7 +8,7 @@ import {
 	EventSessionStarted,
 	EventToolResult,
 	EventUsage
-} from '$lib/generated/protocol';
+} from '@tethon/hub-sdk/protocol';
 import type {
 	ApprovalPayload,
 	ApprovalResolvedPayload,
@@ -24,7 +24,7 @@ import type {
 	SessionSummary as ProtocolSessionSummary,
 	ToolResultPayload,
 	UsagePayload
-} from '$lib/generated/protocol';
+} from '@tethon/hub-sdk/protocol';
 
 type SessionEventType =
 	| typeof EventSessionStarted
