@@ -21,6 +21,10 @@ import {
   registerCurrentDevice,
   unregisterCurrentDevice,
 } from '@/lib/push/registration';
+import {
+  setNotificationResponseAuthInvalidatedHandler,
+  setNotificationResponseAuthStatus,
+} from '@/lib/push/responses';
 
 export type AuthState = {
   status: 'loading' | 'signed-out' | 'signed-in';
@@ -45,6 +49,20 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
     status: 'loading',
     hubUrl: null,
   });
+
+  useEffect(() => {
+    setNotificationResponseAuthInvalidatedHandler(() => {
+      setState({ status: 'signed-out', hubUrl: getStoredHubUrl() });
+    });
+
+    return () => {
+      setNotificationResponseAuthInvalidatedHandler(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    setNotificationResponseAuthStatus(state.status);
+  }, [state.status]);
 
   useEffect(() => {
     let cancelled = false;
