@@ -7,7 +7,13 @@ import { registerDevice, unregisterDevice } from '@/lib/hub/client';
 
 const deviceIDKey = 'tethon.push-device-id';
 const lastTokenKey = 'tethon.push-last-token';
-const androidChannelID = 'approvals';
+export const approvalNotificationCategoryID = 'tethon_approval';
+export const approvalNotificationChannelID = 'approvals';
+export const approvalNotificationActionIDs = {
+  approve: 'approval_approve',
+  deny: 'approval_deny',
+  reply: 'approval_reply',
+} as const;
 
 type RegistrationResult =
   | { status: 'registered'; token: string }
@@ -18,12 +24,7 @@ export const registerCurrentDevice = async (): Promise<RegistrationResult> => {
     return { status: 'skipped', reason: 'unsupported-platform' };
   }
 
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync(androidChannelID, {
-      name: 'Approvals',
-      importance: Notifications.AndroidImportance.MAX,
-    });
-  }
+  await configureApprovalNotifications();
 
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   const finalStatus =
@@ -57,6 +58,47 @@ export const registerCurrentDevice = async (): Promise<RegistrationResult> => {
   await SecureStore.setItemAsync(lastTokenKey, token);
 
   return { status: 'registered', token };
+};
+
+export const configureApprovalNotifications = async (): Promise<void> => {
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync(approvalNotificationChannelID, {
+      name: 'Approvals',
+      importance: Notifications.AndroidImportance.MAX,
+    });
+  }
+
+  await Notifications.setNotificationCategoryAsync(approvalNotificationCategoryID, [
+    {
+      identifier: approvalNotificationActionIDs.approve,
+      buttonTitle: 'Approve',
+      options: {
+        isAuthenticationRequired: true,
+        opensAppToForeground: false,
+      },
+    },
+    {
+      identifier: approvalNotificationActionIDs.deny,
+      buttonTitle: 'Deny',
+      options: {
+        isAuthenticationRequired: false,
+        isDestructive: true,
+        opensAppToForeground: false,
+      },
+    },
+    {
+      identifier: approvalNotificationActionIDs.reply,
+      buttonTitle: 'Reply',
+      options: {
+        isAuthenticationRequired: true,
+        opensAppToForeground: false,
+      },
+      textInput: {
+        submitButtonTitle: 'Send',
+        placeholder: 'Reply to agent',
+      },
+    },
+  ]);
 };
 
 export const unregisterCurrentDevice = async (): Promise<void> => {

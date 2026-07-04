@@ -104,10 +104,12 @@ func TestApprovalPushMessageCarriesSafeDecisionContext(t *testing.T) {
 	})
 
 	visiblePayload := struct {
-		Title string         `json:"title"`
-		Body  string         `json:"body"`
-		Data  map[string]any `json:"data"`
-	}{Title: message.Title, Body: message.Body, Data: message.Data}
+		Title      string         `json:"title"`
+		Body       string         `json:"body"`
+		Data       map[string]any `json:"data"`
+		CategoryID string         `json:"categoryId"`
+		ChannelID  string         `json:"channelId"`
+	}{Title: message.Title, Body: message.Body, Data: message.Data, CategoryID: message.CategoryID, ChannelID: message.ChannelID}
 	raw, err := json.Marshal(visiblePayload)
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +121,12 @@ func TestApprovalPushMessageCarriesSafeDecisionContext(t *testing.T) {
 	}
 	if message.Title != "Approval needed" {
 		t.Fatalf("title = %q, want Approval needed", message.Title)
+	}
+	if message.CategoryID != approvalNotificationCategoryID {
+		t.Fatalf("categoryId = %q, want %q", message.CategoryID, approvalNotificationCategoryID)
+	}
+	if message.ChannelID != approvalNotificationChannelID {
+		t.Fatalf("channelId = %q, want %q", message.ChannelID, approvalNotificationChannelID)
 	}
 	if !strings.Contains(message.Body, "claude-cli/Bash needs approval") {
 		t.Fatalf("body = %q, want safe agent/tool summary", message.Body)
@@ -157,6 +165,9 @@ func TestExpoPushSenderSendsApprovalPayload(t *testing.T) {
 	}
 	if messages[0].Data["kind"] != "approval_requested" {
 		t.Fatalf("message data = %#v, want approval_requested kind", messages[0].Data)
+	}
+	if messages[0].CategoryID != approvalNotificationCategoryID || messages[0].ChannelID != approvalNotificationChannelID {
+		t.Fatalf("message category/channel = %q/%q, want %q/%q", messages[0].CategoryID, messages[0].ChannelID, approvalNotificationCategoryID, approvalNotificationChannelID)
 	}
 }
 

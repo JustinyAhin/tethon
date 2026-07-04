@@ -15,9 +15,11 @@ import (
 )
 
 const (
-	expoPushSendURL       = "https://exp.host/--/api/v2/push/send"
-	expoPushMessageLimit  = 100
-	expoDeviceNotRegister = "DeviceNotRegistered"
+	approvalNotificationCategoryID = "tethon_approval"
+	approvalNotificationChannelID  = "approvals"
+	expoPushSendURL                = "https://exp.host/--/api/v2/push/send"
+	expoPushMessageLimit           = 100
+	expoDeviceNotRegister          = "DeviceNotRegistered"
 )
 
 type PushSender interface {
@@ -154,10 +156,12 @@ func (s *ExpoPushSender) sendChunk(ctx context.Context, devices []ExpoDevice, me
 }
 
 type expoPushMessage struct {
-	To    string         `json:"to"`
-	Title string         `json:"title"`
-	Body  string         `json:"body"`
-	Data  map[string]any `json:"data,omitempty"`
+	To         string         `json:"to"`
+	Title      string         `json:"title"`
+	Body       string         `json:"body"`
+	Data       map[string]any `json:"data,omitempty"`
+	CategoryID string         `json:"categoryId,omitempty"`
+	ChannelID  string         `json:"channelId,omitempty"`
 }
 
 type expoPushResponse struct {
@@ -227,10 +231,12 @@ func approvalPushMessage(token string, req protocol.PushApprovalTestRequest) exp
 	}
 
 	return expoPushMessage{
-		To:    token,
-		Title: "Approval needed",
-		Body:  body,
-		Data:  data,
+		To:         token,
+		Title:      "Approval needed",
+		Body:       body,
+		Data:       data,
+		CategoryID: approvalNotificationCategoryID,
+		ChannelID:  approvalNotificationChannelID,
 	}
 }
 
