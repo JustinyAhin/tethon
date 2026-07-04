@@ -1,5 +1,5 @@
 import { getCredentials, type HubCredentials } from '@/lib/hub/credentials';
-import type { ListHostsResponse } from '@/lib/hub/types';
+import type { ListHostsResponse, ListSessionsResponse } from '@/lib/hub/types';
 
 const requestTimeoutMs = 10_000;
 
@@ -97,4 +97,55 @@ export const fetchHosts = async (
   });
 
   return (await response.json()) as ListHostsResponse;
+};
+
+export const sessionPath = (id: string): { hostId: string; localId: string } => {
+  const slash = id.indexOf('/');
+
+  if (slash <= 0 || slash === id.length - 1) {
+    throw new HubRequestError({
+      message: 'Session id must be host/local',
+      status: 400,
+    });
+  }
+
+  return { hostId: id.slice(0, slash), localId: id.slice(slash + 1) };
+};
+
+export const fetchSessions = async (
+  credentials?: HubCredentials,
+): Promise<ListSessionsResponse> => {
+  const response = await hubFetch({
+    path: '/sessions',
+    init: { method: 'GET' },
+    credentials,
+  });
+
+  return (await response.json()) as ListSessionsResponse;
+};
+
+export const cancelSession = async ({
+  hostId,
+  localId,
+}: {
+  hostId: string;
+  localId: string;
+}): Promise<void> => {
+  await hubFetch({
+    path: `/sessions/${encodeURIComponent(hostId)}/${encodeURIComponent(localId)}/cancel`,
+    init: { method: 'POST' },
+  });
+};
+
+export const deleteSession = async ({
+  hostId,
+  localId,
+}: {
+  hostId: string;
+  localId: string;
+}): Promise<void> => {
+  await hubFetch({
+    path: `/sessions/${encodeURIComponent(hostId)}/${encodeURIComponent(localId)}`,
+    init: { method: 'DELETE' },
+  });
 };

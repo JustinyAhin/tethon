@@ -24,7 +24,17 @@ const RootStack = () => {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Protected guard={signedIn}>
-        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="sessions/[host]/[local]"
+          options={{
+            headerShown: true,
+            title: 'Session',
+            headerTintColor: '#1769aa',
+            headerStyle: { backgroundColor: '#f7f9fb' },
+            headerShadowVisible: false,
+          }}
+        />
       </Stack.Protected>
       <Stack.Protected guard={!signedIn}>
         <Stack.Screen name="connect" />

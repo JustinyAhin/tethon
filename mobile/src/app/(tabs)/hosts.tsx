@@ -13,7 +13,7 @@ import { fetchHosts, HubAuthError, HubRequestError } from '@/lib/hub/client';
 import { useAuth } from '@/lib/hub/auth-context';
 import type { HostSummary } from '@/lib/hub/types';
 
-export default function Index() {
+export default function Hosts() {
   const { hubUrl, invalidate, signOut, status } = useAuth();
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   const [loading, setLoading] = useState(true);

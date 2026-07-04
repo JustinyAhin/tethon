@@ -1,1 +1,7 @@
-export type { RepoInfo, HostSummary, ListHostsResponse } from '@tethon/hub-sdk/protocol';
+export type {
+  RepoInfo,
+  HostSummary,
+  ListHostsResponse,
+  SessionSummary,
+  ListSessionsResponse,
+} from '@tethon/hub-sdk/protocol';
