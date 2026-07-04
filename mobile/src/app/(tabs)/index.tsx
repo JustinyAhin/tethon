@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   FlatList,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
@@ -13,6 +16,7 @@ import { SessionCard } from '@/components/session-card';
 import { useSessions } from '@/lib/hub/use-sessions';
 
 export default function Sessions() {
+  const router = useRouter();
   const { error, loading, refresh, sessions } = useSessions();
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(true);
@@ -42,6 +46,18 @@ export default function Sessions() {
           <View style={styles.heading}>
             <Text style={styles.title}>Sessions</Text>
           </View>
+          <Pressable
+            accessibilityLabel="Start session"
+            onPress={() => {
+              router.push('../sessions/new');
+            }}
+            style={({ pressed }) => [
+              styles.addButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons color="#ffffff" name="add" size={22} />
+          </Pressable>
         </View>
 
         {loading ? (
@@ -68,9 +84,21 @@ export default function Sessions() {
               data={sessions}
               keyExtractor={(session) => session.id}
               ListEmptyComponent={
-                <Text style={styles.emptyText}>
-                  No sessions yet. Start sessions from the web app for now.
-                </Text>
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyText}>No sessions yet.</Text>
+                  <Pressable
+                    onPress={() => {
+                      router.push('../sessions/new');
+                    }}
+                    style={({ pressed }) => [
+                      styles.emptyButton,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Ionicons color="#ffffff" name="add" size={18} />
+                    <Text style={styles.emptyButtonText}>Start session</Text>
+                  </Pressable>
+                </View>
               }
               refreshControl={
                 <RefreshControl onRefresh={refreshList} refreshing={refreshing} />
@@ -109,6 +137,17 @@ const styles = StyleSheet.create({
     color: '#101820',
     fontSize: 28,
     fontWeight: '700',
+  },
+  addButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#1769aa',
+  },
+  pressed: {
+    opacity: 0.75,
   },
   centerState: {
     flex: 1,
@@ -150,5 +189,24 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     maxWidth: 260,
     textAlign: 'center',
+  },
+  emptyState: {
+    alignItems: 'center',
+    gap: 14,
+  },
+  emptyButton: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderRadius: 8,
+    backgroundColor: '#1769aa',
+    paddingHorizontal: 14,
+  },
+  emptyButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

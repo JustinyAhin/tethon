@@ -1,9 +1,12 @@
 import { getCredentials, type HubCredentials } from '@/lib/hub/credentials';
 import type {
   ApprovalAction,
+  CreateSessionRequest,
+  CreateSessionResponse,
   InputRequest,
   ListHostsResponse,
   ListSessionsResponse,
+  RepoRefsResponse,
   ResolveApprovalRequest,
 } from '@/lib/hub/types';
 
@@ -105,6 +108,21 @@ export const fetchHosts = async (
   return (await response.json()) as ListHostsResponse;
 };
 
+export const fetchRepoRefs = async ({
+  hostId,
+  repoId,
+}: {
+  hostId: string;
+  repoId: string;
+}): Promise<RepoRefsResponse> => {
+  const response = await hubFetch({
+    path: `/repos/${encodeURIComponent(hostId)}/${encodeURIComponent(repoId)}/refs`,
+    init: { method: 'GET' },
+  });
+
+  return (await response.json()) as RepoRefsResponse;
+};
+
 export const sessionPath = (id: string): { hostId: string; localId: string } => {
   const slash = id.indexOf('/');
 
@@ -128,6 +146,21 @@ export const fetchSessions = async (
   });
 
   return (await response.json()) as ListSessionsResponse;
+};
+
+export const createSession = async (
+  body: CreateSessionRequest,
+): Promise<CreateSessionResponse> => {
+  const response = await hubFetch({
+    path: '/sessions',
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  });
+
+  return (await response.json()) as CreateSessionResponse;
 };
 
 export const cancelSession = async ({

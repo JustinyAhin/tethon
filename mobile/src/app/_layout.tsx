@@ -26,6 +26,16 @@ const RootStack = () => {
       <Stack.Protected guard={signedIn}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
+          name="sessions/new"
+          options={{
+            headerShown: true,
+            title: 'Start session',
+            headerTintColor: '#1769aa',
+            headerStyle: { backgroundColor: '#f7f9fb' },
+            headerShadowVisible: false,
+          }}
+        />
+        <Stack.Screen
           name="sessions/[host]/[local]"
           options={{
             headerShown: true,
