@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "tethon",
+    "slug": "tethon",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/icon.png",
-      "bundleIdentifier": "com.anonymous.mobile"
+      "bundleIdentifier": "dev.tethon.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -42,6 +42,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "34f110cb-d116-4d6c-aec5-51695062802e"
+      }
+    },
+    "owner": "segbedji"
   }
 }
