@@ -14,6 +14,11 @@ import (
 
 var errDeviceNotFound = errors.New("device not found")
 
+type ExpoDevice struct {
+	DeviceID  string
+	PushToken string
+}
+
 type DeviceStore struct {
 	db  *sql.DB
 	now func() time.Time
@@ -86,6 +91,14 @@ func (s *DeviceStore) Register(ctx context.Context, req protocol.RegisterDeviceR
 }
 
 func (s *DeviceStore) Unregister(ctx context.Context, deviceID string) error {
+	return s.disable(ctx, deviceID)
+}
+
+func (s *DeviceStore) Disable(ctx context.Context, deviceID string) error {
+	return s.disable(ctx, deviceID)
+}
+
+func (s *DeviceStore) disable(ctx context.Context, deviceID string) error {
 	now := s.now().UTC()
 	result, err := s.db.ExecContext(ctx, `UPDATE devices SET disabled_at = ?, updated_at = ? WHERE device_id = ? AND disabled_at IS NULL`,
 		formatTime(now), formatTime(now), deviceID)
@@ -100,6 +113,24 @@ func (s *DeviceStore) Unregister(ctx context.Context, deviceID string) error {
 		return errDeviceNotFound
 	}
 	return nil
+}
+
+func (s *DeviceStore) ActiveExpoDevices(ctx context.Context) ([]ExpoDevice, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT device_id, push_token FROM devices WHERE push_service = 'expo' AND disabled_at IS NULL ORDER BY updated_at DESC, device_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	devices := []ExpoDevice{}
+	for rows.Next() {
+		var device ExpoDevice
+		if err := rows.Scan(&device.DeviceID, &device.PushToken); err != nil {
+			return nil, err
+		}
+		devices = append(devices, device)
+	}
+	return devices, rows.Err()
 }
 
 func (s *DeviceStore) ExpoPushTokens(ctx context.Context) ([]string, error) {

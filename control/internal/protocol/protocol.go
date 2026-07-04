@@ -119,6 +119,25 @@ type RegisterDeviceResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type PushTestRequest struct {
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
+}
+
+type PushTestResponse struct {
+	Registered int                 `json:"registered"`
+	Attempted  int                 `json:"attempted"`
+	Accepted   int                 `json:"accepted"`
+	Rejected   int                 `json:"rejected"`
+	Rejections []PushTestRejection `json:"rejections"`
+}
+
+type PushTestRejection struct {
+	DeviceID string `json:"device_id"`
+	Code     string `json:"code,omitempty"`
+	Message  string `json:"message,omitempty"`
+}
+
 type RegisterHostRequest struct {
 	HostID    string     `json:"host_id"`
 	Name      string     `json:"name"`

@@ -106,6 +106,22 @@ export interface RegisterDeviceResponse {
 	platform: string;
 	updated_at: string /* RFC3339 */;
 }
+export interface PushTestRequest {
+	title?: string;
+	body?: string;
+}
+export interface PushTestResponse {
+	registered: number /* int */;
+	attempted: number /* int */;
+	accepted: number /* int */;
+	rejected: number /* int */;
+	rejections: PushTestRejection[];
+}
+export interface PushTestRejection {
+	device_id: string;
+	code?: string;
+	message?: string;
+}
 export interface RegisterHostRequest {
 	host_id: string;
 	name: string;

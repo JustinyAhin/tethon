@@ -24,6 +24,7 @@ func run() error {
 	hostTimeout := flag.Duration("host-timeout", 30*time.Second, "host online timeout")
 	authToken := flag.String("auth-token", os.Getenv("TETHON_HUB_AUTH_TOKEN"), "bearer token required for hub requests")
 	authTokens := flag.String("auth-tokens", os.Getenv("TETHON_HUB_AUTH_TOKENS"), "additional bearer tokens accepted for hub requests, separated by comma or newline")
+	expoAccessToken := flag.String("expo-access-token", os.Getenv("TETHON_EXPO_ACCESS_TOKEN"), "optional Expo Push Security access token")
 	dbPath := flag.String("db", defaultDBPath(), "sqlite database path")
 	flag.Parse()
 
@@ -38,6 +39,7 @@ func run() error {
 	}
 	defer store.Close()
 	hubServer.SetDeviceStore(store)
+	hubServer.SetPushSender(hub.NewExpoPushSender(hub.ExpoPushConfig{AccessToken: *expoAccessToken}))
 	srv := &http.Server{Addr: *addr, Handler: hubServer.Handler()}
 	log.Printf("hub serving on http://%s with db %s", *addr, *dbPath)
 	return srv.ListenAndServe()

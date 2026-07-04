@@ -89,6 +89,23 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	'/push/test': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/** Send a test push notification to registered devices */
+		post: operations['sendTestPush'];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	'/repos/{host_id}/{repo_id}/refs': {
 		parameters: {
 			query?: never;
@@ -262,6 +279,26 @@ export interface components {
 		};
 		ListSessionsResponse: {
 			sessions: components['schemas']['SessionSummary'][] | null;
+		};
+		PushTestRejection: {
+			code?: string;
+			device_id: string;
+			message?: string;
+		};
+		PushTestRequest: {
+			body?: string;
+			title?: string;
+		};
+		PushTestResponse: {
+			/** Format: int64 */
+			accepted: number;
+			/** Format: int64 */
+			attempted: number;
+			/** Format: int64 */
+			registered: number;
+			/** Format: int64 */
+			rejected: number;
+			rejections: components['schemas']['PushTestRejection'][] | null;
 		};
 		RegisterDeviceRequest: {
 			app_id?: string;
@@ -574,6 +611,66 @@ export interface operations {
 			};
 			/** @description Internal Server Error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	sendTestPush: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				'application/json': components['schemas']['PushTestRequest'];
+			};
+		};
+		responses: {
+			/** @description OK */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['PushTestResponse'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
 				headers: {
 					[name: string]: unknown;
 				};

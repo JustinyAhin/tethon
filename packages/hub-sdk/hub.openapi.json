@@ -170,6 +170,63 @@
 				"required": ["sessions"],
 				"type": "object"
 			},
+			"PushTestRejection": {
+				"additionalProperties": false,
+				"properties": {
+					"code": {
+						"type": "string"
+					},
+					"device_id": {
+						"type": "string"
+					},
+					"message": {
+						"type": "string"
+					}
+				},
+				"required": ["device_id"],
+				"type": "object"
+			},
+			"PushTestRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"body": {
+						"type": "string"
+					},
+					"title": {
+						"type": "string"
+					}
+				},
+				"type": "object"
+			},
+			"PushTestResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"accepted": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"attempted": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"registered": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"rejected": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"rejections": {
+						"items": {
+							"$ref": "#/components/schemas/PushTestRejection"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": ["registered", "attempted", "accepted", "rejected", "rejections"],
+				"type": "object"
+			},
 			"RegisterDeviceRequest": {
 				"additionalProperties": false,
 				"properties": {
@@ -666,6 +723,75 @@
 				},
 				"summary": "Refresh a host heartbeat",
 				"tags": ["hosts"]
+			}
+		},
+		"/push/test": {
+			"post": {
+				"operationId": "sendTestPush",
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/PushTestRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/PushTestResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Send a test push notification to registered devices",
+				"tags": ["push"]
 			}
 		},
 		"/repos/{host_id}/{repo_id}/refs": {

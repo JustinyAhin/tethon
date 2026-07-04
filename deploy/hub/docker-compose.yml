@@ -7,6 +7,7 @@ services:
     environment:
       TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
       TETHON_HUB_AUTH_TOKENS: ${TETHON_HUB_AUTH_TOKENS:-}
+      TETHON_EXPO_ACCESS_TOKEN: ${TETHON_EXPO_ACCESS_TOKEN:-}
     volumes:
       - hub-data:/var/lib/tethon
     expose:

@@ -101,6 +101,45 @@ func TestDeviceStorePersistsAndUnregisters(t *testing.T) {
 	}
 }
 
+func TestDeviceStoreListsActiveExpoDevicesAndDisables(t *testing.T) {
+	ctx := context.Background()
+	store := newTestDeviceStore(t)
+	if _, err := store.Register(ctx, protocol.RegisterDeviceRequest{
+		DeviceID:    "phone-1",
+		PushService: "expo",
+		PushToken:   "ExpoPushToken[1]",
+		Platform:    "ios",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Register(ctx, protocol.RegisterDeviceRequest{
+		DeviceID:    "phone-2",
+		PushService: "expo",
+		PushToken:   "ExpoPushToken[2]",
+		Platform:    "android",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	devices, err := store.ActiveExpoDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 2 {
+		t.Fatalf("devices = %#v, want 2", devices)
+	}
+	if err := store.Disable(ctx, "phone-1"); err != nil {
+		t.Fatal(err)
+	}
+	devices, err = store.ActiveExpoDevices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].DeviceID != "phone-2" || devices[0].PushToken != "ExpoPushToken[2]" {
+		t.Fatalf("devices after disable = %#v", devices)
+	}
+}
+
 func TestValidateDevice(t *testing.T) {
 	base := protocol.RegisterDeviceRequest{
 		DeviceID:    "phone-1",

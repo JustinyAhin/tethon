@@ -100,6 +100,14 @@ type unregisterDeviceOutput struct {
 	Status int `status:"204"`
 }
 
+type pushTestInput struct {
+	Body protocol.PushTestRequest
+}
+
+type pushTestOutput struct {
+	Body protocol.PushTestResponse
+}
+
 type registerHostInput struct {
 	Body protocol.RegisterHostRequest
 }
@@ -192,6 +200,16 @@ func (s *Server) registerHumaRoutes(api huma.API) {
 		DefaultStatus: http.StatusNoContent,
 		Errors:        []int{http.StatusNotFound, http.StatusServiceUnavailable},
 	}, s.unregisterDeviceHuma)
+
+	huma.Register(api, huma.Operation{
+		OperationID:      "sendTestPush",
+		Method:           http.MethodPost,
+		Path:             "/push/test",
+		Summary:          "Send a test push notification to registered devices",
+		Tags:             []string{"push"},
+		SkipValidateBody: true,
+		Errors:           []int{http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.sendTestPushHuma)
 
 	huma.Register(api, huma.Operation{
 		OperationID: "listHosts",
@@ -343,6 +361,32 @@ func (s *Server) unregisterDeviceHuma(ctx context.Context, input *unregisterDevi
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
 	return &unregisterDeviceOutput{Status: http.StatusNoContent}, nil
+}
+
+func (s *Server) sendTestPushHuma(ctx context.Context, input *pushTestInput) (*pushTestOutput, error) {
+	if s.devices == nil {
+		return nil, huma.Error503ServiceUnavailable("device store is not configured")
+	}
+	if s.push == nil {
+		return nil, huma.Error503ServiceUnavailable("push sender is not configured")
+	}
+	devices, err := s.devices.ActiveExpoDevices(ctx)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+	resp, err := s.push.SendTest(ctx, devices, input.Body)
+	if err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	for _, rejection := range resp.Rejections {
+		if rejection.Code != expoDeviceNotRegister {
+			continue
+		}
+		if err := s.devices.Disable(ctx, rejection.DeviceID); err != nil && !errors.Is(err, errDeviceNotFound) {
+			return nil, huma.Error500InternalServerError(err.Error())
+		}
+	}
+	return &pushTestOutput{Body: resp}, nil
 }
 
 func (s *Server) listHostsHuma(_ context.Context, _ *struct{}) (*listHostsOutput, error) {

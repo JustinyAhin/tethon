@@ -118,6 +118,65 @@ func TestHubDeviceRoutesValidateAndRequireAuth(t *testing.T) {
 	assertStatus(t, http.MethodDelete, ts.URL+"/devices/phone-1", "secret", http.StatusNotFound)
 }
 
+func TestHubSendsTestPushAndDisablesUnregisteredDevice(t *testing.T) {
+	hub := New(time.Second)
+	store := newTestDeviceStore(t)
+	hub.SetAuthToken("secret")
+	hub.SetDeviceStore(store)
+	hub.SetPushSender(fakePushSender{
+		response: protocol.PushTestResponse{
+			Registered: 2,
+			Attempted:  2,
+			Accepted:   1,
+			Rejected:   1,
+			Rejections: []protocol.PushTestRejection{{
+				DeviceID: "phone-2",
+				Code:     expoDeviceNotRegister,
+				Message:  "not registered",
+			}},
+		},
+	})
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	for _, req := range []protocol.RegisterDeviceRequest{
+		{DeviceID: "phone-1", PushService: "expo", PushToken: "ExpoPushToken[1]", Platform: "ios"},
+		{DeviceID: "phone-2", PushService: "expo", PushToken: "ExpoPushToken[2]", Platform: "android"},
+	} {
+		postJSONAuth(t, ts.URL+"/devices/register", "secret", req)
+	}
+	raw := postJSONRaw(t, ts.URL+"/push/test", protocol.PushTestRequest{Title: "Hello", Body: "World"}, "secret")
+	if strings.Contains(raw, "ExpoPushToken") {
+		t.Fatalf("test push response leaked token: %s", raw)
+	}
+	var resp protocol.PushTestResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Registered != 2 || resp.Accepted != 1 || resp.Rejected != 1 {
+		t.Fatalf("push response = %+v", resp)
+	}
+
+	devices, err := store.ActiveExpoDevices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].DeviceID != "phone-1" {
+		t.Fatalf("active devices after rejection = %#v", devices)
+	}
+}
+
+func TestHubTestPushRequiresAuthAndConfiguredSender(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthToken("secret")
+	hub.SetDeviceStore(newTestDeviceStore(t))
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	assertStatus(t, http.MethodPost, ts.URL+"/push/test", "", http.StatusUnauthorized)
+	assertPostStatus(t, ts.URL+"/push/test", "secret", protocol.PushTestRequest{}, http.StatusServiceUnavailable)
+}
+
 func TestHubLogsHostRegistrationWithoutBearerToken(t *testing.T) {
 	var logs bytes.Buffer
 	hub := New(time.Second)
@@ -811,4 +870,13 @@ func approvalRequestID(t *testing.T, event protocol.Event) string {
 
 func strconvInt(value int64) string {
 	return strconv.FormatInt(value, 10)
+}
+
+type fakePushSender struct {
+	response protocol.PushTestResponse
+	err      error
+}
+
+func (f fakePushSender) SendTest(context.Context, []ExpoDevice, protocol.PushTestRequest) (protocol.PushTestResponse, error) {
+	return f.response, f.err
 }

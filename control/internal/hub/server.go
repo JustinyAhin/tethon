@@ -27,6 +27,7 @@ type Server struct {
 	now         func() time.Time
 	authTokens  [][sha256.Size]byte
 	devices     *DeviceStore
+	push        PushSender
 	logger      *slog.Logger
 }
 
@@ -108,6 +109,10 @@ func (s *Server) SetAuthToken(token string) {
 
 func (s *Server) SetDeviceStore(store *DeviceStore) {
 	s.devices = store
+}
+
+func (s *Server) SetPushSender(sender PushSender) {
+	s.push = sender
 }
 
 func (s *Server) SetAuthTokens(tokens ...string) {

@@ -76,12 +76,17 @@ hub for now.
    environment:
      TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
      TETHON_HUB_AUTH_TOKENS: ${TETHON_HUB_AUTH_TOKENS:-}
+     TETHON_EXPO_ACCESS_TOKEN: ${TETHON_EXPO_ACCESS_TOKEN:-}
    volumes:
      - hub-data:/var/lib/tethon
    ```
 
    `TETHON_HUB_AUTH_TOKENS` is optional. It is only needed during token
    rotation.
+
+   `TETHON_EXPO_ACCESS_TOKEN` is optional. Leave it blank unless Expo Push
+   Security is enabled for the project; if enabled, set it to the EAS push
+   access token so the hub can call Expo's push API.
 
    The hub stores registered mobile push devices in SQLite at
    `/var/lib/tethon/hub.db`. Keep the `hub-data` volume attached across
@@ -144,6 +149,17 @@ hub for now.
    ```sh
    export TETHON_HUB_AUTH_TOKEN='<same-token>'
    curl -fsS -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" https://hub.tethon.dev/hosts
+   ```
+
+   After a phone has registered for push, send a generic smoke-test
+   notification:
+
+   ```sh
+   curl -fsS \
+     -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" \
+     -H "Content-Type: application/json" \
+     -X POST https://hub.tethon.dev/push/test \
+     -d '{"title":"Tethon","body":"Push test"}'
    ```
 
 7. Point web at the hub.
