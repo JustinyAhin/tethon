@@ -1,8 +1,12 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
 
 import { HubAuthError, HubRequestError } from '@/lib/hub/client';
 import { useAuth } from '@/lib/hub/auth-context';
+import {
+  loadSessionEvents,
+  saveSessionEvents,
+} from '@/lib/hub/event-storage';
 import { openSessionStream } from '@/lib/hub/stream';
 import type { SessionEvent } from '@/lib/hub/types';
 
@@ -25,20 +29,15 @@ export const useSessionStream = ({
   hostId,
   localId,
 }: UseSessionStreamArgs): UseSessionStreamResult => {
-  // tethon-927.6: persistence seeds initialEvents here; from derives from them.
-  const initialEvents: SessionEvent[] = [];
-  const [events, setEvents] = useState<SessionEvent[]>(initialEvents);
+  const [events, setEvents] = useState<SessionEvent[]>([]);
   const [connected, setConnected] = useState(false);
-  const [done, setDone] = useState(
-    initialEvents.some((event) => event.type === 'done' || event.type === 'error'),
-  );
+  const [done, setDone] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const { invalidate, status: authStatus } = useAuth();
-  const seenRef = useRef(new Set(initialEvents.map((event) => event.seq)));
-  const maxSeqRef = useRef(
-    initialEvents.reduce((max, event) => Math.max(max, event.seq), 0),
-  );
+  const seenRef = useRef(new Set<number>());
+  const maxSeqRef = useRef(0);
   const doneRef = useRef(done);
+  const hydratedRef = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
 
   const status = useMemo<StreamStatus>(() => {
@@ -90,6 +89,38 @@ export const useSessionStream = ({
         }
 
         return null;
+      };
+
+      const hydrate = async (): Promise<boolean> => {
+        if (hydratedRef.current) {
+          return true;
+        }
+
+        const stored = await loadSessionEvents({ hostId, localId });
+
+        if (stopped) {
+          return false;
+        }
+
+        if (stored.length > 0) {
+          const seen = new Set(stored.map((event) => event.seq));
+          const maxSeq = stored.reduce(
+            (max, event) => Math.max(max, event.seq),
+            0,
+          );
+          const storedDone = stored.some(
+            (event) => event.type === 'done' || event.type === 'error',
+          );
+
+          seenRef.current = seen;
+          maxSeqRef.current = maxSeq;
+          doneRef.current = storedDone;
+          setDone(storedDone);
+          setEvents(stored);
+        }
+
+        hydratedRef.current = true;
+        return true;
       };
 
       const consume = async () => {
@@ -178,6 +209,12 @@ export const useSessionStream = ({
       };
 
       void (async () => {
+        const hydrated = await hydrate();
+
+        if (!hydrated) {
+          return;
+        }
+
         while (!stopped && !doneRef.current) {
           await consume();
 
@@ -195,6 +232,20 @@ export const useSessionStream = ({
       };
     }, [authStatus, hostId, invalidate, localId]),
   );
+
+  useEffect(() => {
+    if (!hydratedRef.current || events.length === 0) {
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      void saveSessionEvents({ events, hostId, localId });
+    }, 400);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [events, hostId, localId]);
 
   return { events, status, streamError };
 };

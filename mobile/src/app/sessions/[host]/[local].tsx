@@ -26,6 +26,7 @@ import {
   resolveApproval,
 } from '@/lib/hub/client';
 import { useAuth } from '@/lib/hub/auth-context';
+import { clearSessionEvents } from '@/lib/hub/event-storage';
 import {
   EventApprovalResolved,
   type ApprovalAction,
@@ -163,6 +164,7 @@ const SessionDetailContent = ({
 
     try {
       await deleteSession({ hostId, localId });
+      await clearSessionEvents({ hostId, localId });
       router.back();
     } catch (caught) {
       if (caught instanceof HubAuthError) {
