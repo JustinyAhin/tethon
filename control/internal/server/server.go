@@ -12,32 +12,40 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"tethon/internal/agent"
 	"tethon/internal/protocol"
 	"tethon/internal/repo"
+	"tethon/internal/resource"
 	"tethon/internal/sessionlog"
 	"tethon/internal/worktree"
 )
 
+const defaultResourceSnapshotTimeout = 2 * time.Second
+
 type Server struct {
-	store     *sessionlog.Store
-	broker    *broker
-	agents    *agent.Registry
-	repos     *repo.Registry
-	worktrees *worktree.Manager
-	repoRoots []string
-	logger    *slog.Logger
-	running   map[string]agent.RunningSession
-	runningM  sync.RWMutex
+	store           *sessionlog.Store
+	broker          *broker
+	agents          *agent.Registry
+	repos           *repo.Registry
+	worktrees       *worktree.Manager
+	repoRoots       []string
+	resources       resource.Collector
+	resourceTimeout time.Duration
+	logger          *slog.Logger
+	running         map[string]agent.RunningSession
+	runningM        sync.RWMutex
 }
 
 type Config struct {
-	Agents    *agent.Registry
-	Repos     *repo.Registry
-	Worktrees *worktree.Manager
-	RepoRoots []string
-	Logger    *slog.Logger
+	Agents            *agent.Registry
+	Repos             *repo.Registry
+	Worktrees         *worktree.Manager
+	RepoRoots         []string
+	ResourceCollector resource.Collector
+	ResourceTimeout   time.Duration
+	Logger            *slog.Logger
 }
 
 func New(store *sessionlog.Store) *Server {
@@ -57,6 +65,14 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	resources := config.ResourceCollector
+	if resources == nil {
+		resources = resource.NewCollector()
+	}
+	resourceTimeout := config.ResourceTimeout
+	if resourceTimeout <= 0 {
+		resourceTimeout = defaultResourceSnapshotTimeout
+	}
 	repoRoots := make([]string, 0, len(config.RepoRoots))
 	for _, root := range config.RepoRoots {
 		abs, err := filepath.Abs(root)
@@ -72,14 +88,16 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 		repoRoots = append(repoRoots, filepath.Clean(realPath))
 	}
 	return &Server{
-		store:     store,
-		broker:    newBroker(),
-		agents:    agents,
-		repos:     config.Repos,
-		worktrees: config.Worktrees,
-		repoRoots: repoRoots,
-		logger:    logger,
-		running:   make(map[string]agent.RunningSession),
+		store:           store,
+		broker:          newBroker(),
+		agents:          agents,
+		repos:           config.Repos,
+		worktrees:       config.Worktrees,
+		repoRoots:       repoRoots,
+		resources:       resources,
+		resourceTimeout: resourceTimeout,
+		logger:          logger,
+		running:         make(map[string]agent.RunningSession),
 	}
 }
 
@@ -87,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sessions", s.handleSessions)
 	mux.HandleFunc("/sessions/", s.handleSession)
+	mux.HandleFunc("/resources/sessions", s.handleSessionResources)
 	mux.HandleFunc("/repos/", s.handleRepo)
 	return mux
 }
@@ -175,6 +194,39 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		summaries = []protocol.SessionSummary{}
 	}
 	writeJSON(w, http.StatusOK, protocol.ListSessionsResponse{Sessions: summaries})
+}
+
+func (s *Server) handleSessionResources(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/resources/sessions" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	targets, warnings := s.activeResourceTargets(r.Context())
+	generatedAt := time.Now().UTC()
+	if len(targets) == 0 {
+		writeJSON(w, http.StatusOK, protocol.ListSessionResourcesResponse{
+			GeneratedAt: generatedAt,
+			Snapshots:   []protocol.SessionResourceSnapshot{},
+			Warnings:    warnings,
+		})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.resourceTimeout)
+	defer cancel()
+	snapshots, collectorWarnings := s.resources.Collect(ctx, targets)
+	warnings = append(warnings, collectorWarnings...)
+	if snapshots == nil {
+		snapshots = []protocol.SessionResourceSnapshot{}
+	}
+	writeJSON(w, http.StatusOK, protocol.ListSessionResourcesResponse{
+		GeneratedAt: generatedAt,
+		Snapshots:   snapshots,
+		Warnings:    warnings,
+	})
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -419,6 +471,10 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 		s.handleStream(w, r, sessionID)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "resources" && r.Method == http.MethodGet {
+		s.handleSessionResource(w, r, sessionID)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "input" && r.Method == http.MethodPost {
 		s.handleInput(w, r, sessionID)
 		return
@@ -433,6 +489,48 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeError(w, http.StatusNotFound, "not found")
+}
+
+func (s *Server) handleSessionResource(w http.ResponseWriter, r *http.Request, sessionID string) {
+	session, err := s.store.GetSession(r.Context(), sessionID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	running := s.getRunning(sessionID)
+	if running == nil {
+		writeError(w, http.StatusConflict, "session is not active")
+		return
+	}
+	target := resource.SessionTarget{Session: session, Identity: running.ProcessIdentity()}
+	ctx, cancel := context.WithTimeout(r.Context(), s.resourceTimeout)
+	defer cancel()
+	snapshots, warnings := s.resources.Collect(ctx, []resource.SessionTarget{target})
+	if len(snapshots) == 0 {
+		snapshot := protocol.SessionResourceSnapshot{
+			SessionID:      session.ID,
+			Status:         session.Status,
+			Agent:          session.Agent,
+			RepoID:         session.RepoID,
+			Repo:           session.Repo,
+			CWD:            session.CWD,
+			WorktreePath:   session.WorktreePath,
+			Processes:      []protocol.ResourceProcess{},
+			ListeningPorts: []protocol.ResourceListeningPort{},
+			Warnings:       append([]protocol.ResourceWarning{}, warnings...),
+		}
+		writeJSON(w, http.StatusOK, protocol.SessionResourceResponse{
+			GeneratedAt: time.Now().UTC(),
+			Snapshot:    snapshot,
+		})
+		return
+	}
+	snapshot := snapshots[0]
+	snapshot.Warnings = append(snapshot.Warnings, warnings...)
+	writeJSON(w, http.StatusOK, protocol.SessionResourceResponse{
+		GeneratedAt: time.Now().UTC(),
+		Snapshot:    snapshot,
+	})
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -715,6 +813,33 @@ func (s *Server) getRunning(sessionID string) agent.RunningSession {
 	s.runningM.RLock()
 	defer s.runningM.RUnlock()
 	return s.running[sessionID]
+}
+
+func (s *Server) activeResourceTargets(ctx context.Context) ([]resource.SessionTarget, []protocol.ResourceWarning) {
+	s.runningM.RLock()
+	active := make(map[string]agent.RunningSession, len(s.running))
+	for sessionID, running := range s.running {
+		active[sessionID] = running
+	}
+	s.runningM.RUnlock()
+
+	targets := make([]resource.SessionTarget, 0, len(active))
+	warnings := []protocol.ResourceWarning{}
+	for sessionID, running := range active {
+		session, err := s.store.GetSession(ctx, sessionID)
+		if err != nil {
+			warnings = append(warnings, protocol.ResourceWarning{
+				Code:    "session_lookup_failed",
+				Message: err.Error(),
+			})
+			continue
+		}
+		targets = append(targets, resource.SessionTarget{
+			Session:  session,
+			Identity: running.ProcessIdentity(),
+		})
+	}
+	return targets, warnings
 }
 
 func (s *Server) clearRunningIfTerminal(sessionID string, running agent.RunningSession) {

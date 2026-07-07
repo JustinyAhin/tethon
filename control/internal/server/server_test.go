@@ -18,6 +18,7 @@ import (
 
 	"tethon/internal/agent"
 	"tethon/internal/protocol"
+	"tethon/internal/resource"
 	"tethon/internal/sessionlog"
 )
 
@@ -106,6 +107,87 @@ func TestListSessionsReturnsLocalSummaries(t *testing.T) {
 	}
 	if byID[running.ID].HostID != "" || strings.Contains(byID[running.ID].ID, "/") {
 		t.Fatalf("host summary should use local ids without host_id: %+v", byID[running.ID])
+	}
+}
+
+func TestListSessionResourcesReturnsEmptyWhenNoActiveSessions(t *testing.T) {
+	ts := newTestServerWithConfig(t, Config{
+		Agents:            agent.NewRegistry(agent.NewFake()),
+		ResourceCollector: fakeResourceCollector{},
+	})
+
+	var resp protocol.ListSessionResourcesResponse
+	getJSON(t, ts.URL+"/resources/sessions", &resp)
+	if len(resp.Snapshots) != 0 {
+		t.Fatalf("snapshots = %+v, want empty", resp.Snapshots)
+	}
+	if resp.GeneratedAt.IsZero() {
+		t.Fatal("generated_at is zero")
+	}
+}
+
+func TestListSessionResourcesReturnsActiveSessionSnapshot(t *testing.T) {
+	collector := fakeResourceCollector{}
+	ts := newTestServerWithConfig(t, Config{
+		Agents:            agent.NewRegistry(agent.NewFake()),
+		ResourceCollector: collector,
+	})
+	session := postSession(t, ts.URL)
+
+	var resp protocol.ListSessionResourcesResponse
+	getJSON(t, ts.URL+"/resources/sessions", &resp)
+	if len(resp.Snapshots) != 1 {
+		t.Fatalf("expected 1 snapshot, got %+v", resp.Snapshots)
+	}
+	snapshot := resp.Snapshots[0]
+	if snapshot.SessionID != session.ID || snapshot.Agent != "fake" || snapshot.Processes[0].PID != 1234 {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+}
+
+func TestGetSessionResourceReturnsSelectedActiveSession(t *testing.T) {
+	ts := newTestServerWithConfig(t, Config{
+		Agents:            agent.NewRegistry(agent.NewFake()),
+		ResourceCollector: fakeResourceCollector{},
+	})
+	session := postSession(t, ts.URL)
+
+	var resp protocol.SessionResourceResponse
+	getJSON(t, ts.URL+"/sessions/"+session.ID+"/resources", &resp)
+	if resp.Snapshot.SessionID != session.ID || resp.Snapshot.Aggregate.ProcessCount != 1 {
+		t.Fatalf("unexpected selected snapshot: %+v", resp.Snapshot)
+	}
+}
+
+func TestGetSessionResourceReturnsNotFoundAndInactiveConflict(t *testing.T) {
+	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "tethon.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	inactive, err := store.CreateSession(context.Background(), sessionlog.CreateSessionParams{
+		Repo:   ".",
+		Agent:  "fake",
+		Status: "done",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithConfig(store, Config{
+		Agents:            agent.NewRegistry(agent.NewFake()),
+		ResourceCollector: fakeResourceCollector{},
+	}).Handler())
+	t.Cleanup(ts.Close)
+
+	if status := getStatus(t, ts.URL+"/sessions/missing/resources"); status != http.StatusNotFound {
+		t.Fatalf("missing resource status = %d, want 404", status)
+	}
+	if status := getStatus(t, ts.URL+"/sessions/"+inactive.ID+"/resources"); status != http.StatusConflict {
+		t.Fatalf("inactive resource status = %d, want 409", status)
 	}
 }
 
@@ -514,6 +596,31 @@ func (serverFakeProcess) Identity() agent.ProcessIdentity {
 	return agent.ProcessIdentity{}
 }
 
+type fakeResourceCollector struct{}
+
+func (fakeResourceCollector) Collect(_ context.Context, targets []resource.SessionTarget) ([]protocol.SessionResourceSnapshot, []protocol.ResourceWarning) {
+	snapshots := make([]protocol.SessionResourceSnapshot, 0, len(targets))
+	for _, target := range targets {
+		snapshots = append(snapshots, protocol.SessionResourceSnapshot{
+			SessionID:    target.Session.ID,
+			Status:       target.Session.Status,
+			Agent:        target.Session.Agent,
+			RepoID:       target.Session.RepoID,
+			Repo:         target.Session.Repo,
+			CWD:          target.Session.CWD,
+			WorktreePath: target.Session.WorktreePath,
+			Processes: []protocol.ResourceProcess{{
+				PID:       1234,
+				RSSBytes:  2048,
+				CPUTimeMS: 3000,
+			}},
+			ListeningPorts: []protocol.ResourceListeningPort{{PID: 1234, Protocol: "tcp", Address: "127.0.0.1", Port: 39181}},
+			Aggregate:      protocol.ResourceAggregate{ProcessCount: 1, RSSBytes: 2048, CPUTimeMS: 3000},
+		})
+	}
+	return snapshots, nil
+}
+
 func postSession(t *testing.T, baseURL string) protocol.CreateSessionResponse {
 	t.Helper()
 	var resp protocol.CreateSessionResponse
@@ -587,6 +694,16 @@ func getJSON(t *testing.T, url string, out any) {
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func getStatus(t *testing.T, url string) int {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
 }
 
 func streamEvents(t *testing.T, baseURL, sessionID string, from int64, count int) []protocol.Event {

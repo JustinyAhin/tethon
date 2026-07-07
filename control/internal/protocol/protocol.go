@@ -181,6 +181,77 @@ type ActionEventsResponse struct {
 	Events []Event `json:"events"`
 }
 
+type ListSessionResourcesResponse struct {
+	GeneratedAt time.Time                 `json:"generated_at"`
+	Snapshots   []SessionResourceSnapshot `json:"snapshots"`
+	Warnings    []ResourceWarning         `json:"warnings,omitempty"`
+}
+
+type SessionResourceResponse struct {
+	GeneratedAt time.Time               `json:"generated_at"`
+	Snapshot    SessionResourceSnapshot `json:"snapshot"`
+}
+
+type SessionResourceSnapshot struct {
+	SessionID         string                  `json:"session_id"`
+	Status            string                  `json:"status"`
+	Agent             string                  `json:"agent"`
+	RepoID            string                  `json:"repo_id,omitempty"`
+	Repo              string                  `json:"repo"`
+	CWD               string                  `json:"cwd,omitempty"`
+	WorktreePath      string                  `json:"worktree_path,omitempty"`
+	RuntimeSeconds    int64                   `json:"runtime_seconds,omitempty"`
+	ProcessRoot       ResourceProcessIdentity `json:"process_root"`
+	Processes         []ResourceProcess       `json:"processes"`
+	ListeningPorts    []ResourceListeningPort `json:"listening_ports"`
+	Aggregate         ResourceAggregate       `json:"aggregate"`
+	WorktreeDiskUsage *ResourceDiskUsage      `json:"worktree_disk_usage,omitempty"`
+	Warnings          []ResourceWarning       `json:"warnings,omitempty"`
+}
+
+type ResourceProcessIdentity struct {
+	PID              int       `json:"pid,omitempty"`
+	PGID             int       `json:"pgid,omitempty"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	Executable       string    `json:"executable,omitempty"`
+	OwnsProcessGroup bool      `json:"owns_process_group,omitempty"`
+}
+
+type ResourceProcess struct {
+	PID              int    `json:"pid"`
+	PPID             int    `json:"ppid,omitempty"`
+	PGID             int    `json:"pgid,omitempty"`
+	Command          string `json:"command,omitempty"`
+	CommandRedacted  bool   `json:"command_redacted,omitempty"`
+	CommandTruncated bool   `json:"command_truncated,omitempty"`
+	Executable       string `json:"executable,omitempty"`
+	RSSBytes         int64  `json:"rss_bytes,omitempty"`
+	CPUTimeMS        int64  `json:"cpu_time_ms,omitempty"`
+}
+
+type ResourceListeningPort struct {
+	PID      int    `json:"pid,omitempty"`
+	Protocol string `json:"protocol"`
+	Address  string `json:"address,omitempty"`
+	Port     int    `json:"port"`
+}
+
+type ResourceAggregate struct {
+	ProcessCount int   `json:"process_count"`
+	RSSBytes     int64 `json:"rss_bytes,omitempty"`
+	CPUTimeMS    int64 `json:"cpu_time_ms,omitempty"`
+}
+
+type ResourceDiskUsage struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+}
+
+type ResourceWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type ErrorResponse struct {
 	Error string `json:"error"`
 }
