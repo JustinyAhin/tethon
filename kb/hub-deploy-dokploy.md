@@ -27,7 +27,9 @@ hub for now.
 
 - `deploy/hub/Dockerfile` - builds the `tethon-hub` binary into a small image.
 - `deploy/hub/docker-compose.yml` - Dokploy Compose service with the persistent
-  `hub-data` volume mounted at `/var/lib/tethon`.
+  `hub-data` volume mounted at `/var/lib/tethon`. It defaults to the
+  `ghcr.io/justinyahin/tethon-hub:main` image published by CI.
+- `kb/ci-deploy.md` - CI image publishing, Dokploy webhook, and rollback notes.
 
 ## Dokploy Setup
 
@@ -55,6 +57,11 @@ hub for now.
    ```txt
    deploy/hub/docker-compose.yml
    ```
+
+   The compose file pulls the hub image from GHCR. GitHub container packages are
+   private by default, so configure Dokploy registry credentials with read access
+   to `ghcr.io/justinyahin/tethon-hub` unless you intentionally make the package
+   public.
 
 3. Set the hub token.
 
@@ -106,8 +113,8 @@ hub for now.
 
 5. Deploy.
 
-   Click Deploy in Dokploy and watch the deployment logs. The image build should
-   compile `./cmd/tethon-hub`, then start the container with:
+   Click Deploy in Dokploy and watch the deployment logs. The service should
+   pull the configured hub image, then start the container with:
 
    ```sh
    tethon-hub -addr 0.0.0.0:39180

@@ -1,8 +1,6 @@
 services:
   hub:
-    build:
-      context: ../..
-      dockerfile: deploy/hub/Dockerfile
+    image: ${TETHON_HUB_IMAGE:-ghcr.io/justinyahin/tethon-hub:main}
     restart: unless-stopped
     environment:
       TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}

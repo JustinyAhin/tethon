@@ -7,6 +7,12 @@
     "icon": "./assets/images/icon.png",
     "scheme": "mobile",
     "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/34f110cb-d116-4d6c-aec5-51695062802e"
+    },
     "ios": {
       "icon": "./assets/images/icon.png",
       "bundleIdentifier": "dev.tethon.app"

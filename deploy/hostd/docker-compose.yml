@@ -1,8 +1,6 @@
 services:
   hostd:
-    build:
-      context: ../..
-      dockerfile: deploy/hostd/Dockerfile
+    image: ${TETHON_HOSTD_IMAGE:-ghcr.io/justinyahin/tethon-hostd:main}
     restart: unless-stopped
     environment:
       TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}

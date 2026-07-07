@@ -1,0 +1,132 @@
+name: Control images
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: control-images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  go-checks:
+    name: Go checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: control/go.mod
+          cache-dependency-path: control/go.sum
+
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  publish-images:
+    name: Build and publish images
+    runs-on: ubuntu-latest
+    needs: go-checks
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    outputs:
+      hub-image: ${{ steps.names.outputs.hub-image }}
+      hostd-image: ${{ steps.names.outputs.hostd-image }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Compute image names
+        id: names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          short_sha="${GITHUB_SHA::12}"
+          echo "hub-image=${REGISTRY}/${owner}/tethon-hub:${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "hostd-image=${REGISTRY}/${owner}/tethon-hostd:${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "HUB_IMAGE=${REGISTRY}/${owner}/tethon-hub" >> "$GITHUB_ENV"
+          echo "HOSTD_IMAGE=${REGISTRY}/${owner}/tethon-hostd" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${short_sha}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push hub image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/hub/Dockerfile
+          push: true
+          tags: |
+            ${{ env.HUB_IMAGE }}:main
+            ${{ env.HUB_IMAGE }}:${{ env.SHORT_SHA }}
+          cache-from: type=gha,scope=tethon-hub
+          cache-to: type=gha,mode=max,scope=tethon-hub
+
+      - name: Build and push hostd image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/hostd/Dockerfile
+          push: true
+          tags: |
+            ${{ env.HOSTD_IMAGE }}:main
+            ${{ env.HOSTD_IMAGE }}:${{ env.SHORT_SHA }}
+          cache-from: type=gha,scope=tethon-hostd
+          cache-to: type=gha,mode=max,scope=tethon-hostd
+
+  deploy:
+    name: Trigger Dokploy redeploy
+    runs-on: ubuntu-latest
+    needs: publish-images
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Trigger hub redeploy
+        env:
+          DOKPLOY_HUB_WEBHOOK_URL: ${{ secrets.DOKPLOY_HUB_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DOKPLOY_HUB_WEBHOOK_URL" ]; then
+            echo "DOKPLOY_HUB_WEBHOOK_URL is not set; skipping hub redeploy."
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            --request POST "$DOKPLOY_HUB_WEBHOOK_URL"
+
+      - name: Trigger hostd redeploy
+        env:
+          DOKPLOY_HOSTD_WEBHOOK_URL: ${{ secrets.DOKPLOY_HOSTD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$DOKPLOY_HOSTD_WEBHOOK_URL" ]; then
+            echo "DOKPLOY_HOSTD_WEBHOOK_URL is not set; skipping hostd redeploy."
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            --request POST "$DOKPLOY_HOSTD_WEBHOOK_URL"
