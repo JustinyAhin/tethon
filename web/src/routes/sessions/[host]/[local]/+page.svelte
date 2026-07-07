@@ -192,6 +192,50 @@
 		return JSON.stringify(payload, null, 2);
 	};
 
+	const objectValue = (value: unknown, key: string): unknown => {
+		if (value == null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+		return (value as Record<string, unknown>)[key];
+	};
+
+	const textValue = (value: unknown, key: string): string => {
+		const field = objectValue(value, key);
+		return typeof field === 'string' ? field : '';
+	};
+
+	const compactText = (value: string, max = 220): string => {
+		const text = value.replace(/\s+/g, ' ').trim();
+		if (text.length <= max) return text;
+		return `${text.slice(0, max - 1).trimEnd()}…`;
+	};
+
+	const lineCount = (value: string): number => {
+		if (value === '') return 0;
+		return value.split('\n').length;
+	};
+
+	const toolInputSummary = (payload: ToolResultPayload): string => {
+		const command = textValue(payload.tool_input, 'command');
+		if (command) return compactText(command);
+		const filePath = textValue(payload.tool_input, 'file_path');
+		if (filePath) return compactText(filePath);
+		const description = textValue(payload.tool_input, 'description');
+		if (description) return compactText(description);
+		return payload.tool_input ? compactText(formatPayload(payload.tool_input), 180) : 'No input';
+	};
+
+	const toolResponseSummary = (payload: ToolResultPayload): string => {
+		if (payload.error) return compactText(payload.error);
+		const stdout = textValue(payload.response, 'stdout');
+		const stderr = textValue(payload.response, 'stderr');
+		const pieces: string[] = [];
+		if (stdout) pieces.push(`stdout ${lineCount(stdout)} lines`);
+		if (stderr) pieces.push(`stderr ${lineCount(stderr)} lines`);
+		if (payload.redacted) pieces.push('redacted');
+		if (payload.truncated) pieces.push('truncated');
+		if (pieces.length > 0) return pieces.join(' · ');
+		return payload.response ? compactText(formatPayload(payload.response), 180) : 'No response';
+	};
+
 	const eventTranscript = (event: SessionEvent): string => {
 		switch (event.type) {
 			case 'session_started': {
@@ -572,19 +616,44 @@
 							: ''}
 						{p.redacted ? ' · redacted' : ''}{p.truncated ? ' · truncated' : ''}
 					</p>
-					{#if p.tool_input}
-						<pre class="mt-2 overflow-x-auto rounded bg-white/70 p-2 text-xs">{JSON.stringify(
-								p.tool_input,
-								null,
-								2
-							)}</pre>
-					{/if}
-					{#if p.response}
-						<pre class="mt-2 overflow-x-auto rounded bg-white/70 p-2 text-xs">{JSON.stringify(
-								p.response,
-								null,
-								2
-							)}</pre>
+					<div
+						class="mt-3 space-y-1 text-xs {p.status === 'success'
+							? 'text-emerald-800'
+							: 'text-red-800'}"
+					>
+						{#if p.tool_input}
+							<p>
+								<span class="font-medium">Input:</span>
+								<span>{toolInputSummary(p)}</span>
+							</p>
+						{/if}
+						{#if p.response || p.error}
+							<p>
+								<span class="font-medium">Result:</span>
+								<span>{toolResponseSummary(p)}</span>
+							</p>
+						{/if}
+					</div>
+					{#if p.tool_input || p.response}
+						<details
+							class="mt-2 text-xs {p.status === 'success' ? 'text-emerald-800' : 'text-red-800'}"
+						>
+							<summary class="cursor-pointer select-none font-medium">Raw details</summary>
+							{#if p.tool_input}
+								<pre class="mt-2 overflow-x-auto rounded bg-white/70 p-2">{JSON.stringify(
+										p.tool_input,
+										null,
+										2
+									)}</pre>
+							{/if}
+							{#if p.response}
+								<pre class="mt-2 overflow-x-auto rounded bg-white/70 p-2">{JSON.stringify(
+										p.response,
+										null,
+										2
+									)}</pre>
+							{/if}
+						</details>
 					{/if}
 					{#if p.error}
 						<p class="mt-2 whitespace-pre-wrap text-xs text-red-700">{p.error}</p>
