@@ -47,8 +47,27 @@ exit
 ```
 
 For a private repo, use a GitHub username and fine-grained PAT when clone
-prompts. Use Contents read/write for the tethon repo so the later dogfood
-session can push.
+prompts. GitHub account passwords do not work for HTTPS git operations.
+
+Create the token at:
+
+```text
+https://github.com/settings/personal-access-tokens/new
+```
+
+Use a fine-grained token with:
+
+- Resource owner: the repo owner
+- Repository access: only the `tethon` repository
+- Repository permissions: Contents read/write
+
+When `git clone` prompts, enter the GitHub username as the username and paste
+the token as the password. `credential.helper store` writes it under the
+volume-backed home directory so later fetch/push operations can reuse it.
+
+Local SSH setup on the Mac or VPS host does not apply inside this container.
+Using SSH later would require adding an SSH client and provisioning a deploy key
+or mounted key material into the hostd volume.
 
 ## Verify
 
