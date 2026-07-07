@@ -104,29 +104,43 @@ jobs:
           cache-to: type=gha,mode=max,scope=tethon-hostd
 
   deploy:
-    name: Trigger Dokploy redeploy
+    name: Trigger Dokploy redeploys
     runs-on: ubuntu-latest
     needs: publish-images
     if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     steps:
       - name: Trigger hub redeploy
         env:
-          DOKPLOY_HUB_WEBHOOK_URL: ${{ secrets.DOKPLOY_HUB_WEBHOOK_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
+          DOKPLOY_HUB_COMPOSE_ID: ${{ vars.DOKPLOY_HUB_COMPOSE_ID }}
         run: |
-          if [ -z "$DOKPLOY_HUB_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_HUB_WEBHOOK_URL is not set; skipping hub redeploy."
+          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HUB_COMPOSE_ID" ]; then
+            echo "Dokploy hub API config is incomplete; skipping hub redeploy."
             exit 0
           fi
-          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
-            --request POST "$DOKPLOY_HUB_WEBHOOK_URL"
+          base_url="${DOKPLOY_BASE_URL%/}"
+          short_sha="${GITHUB_SHA::12}"
+          curl --fail-with-body --silent --show-error --retry 3 --retry-delay 5 \
+            --request POST "$base_url/api/compose.redeploy" \
+            --header "x-api-key: $DOKPLOY_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "{\"composeId\":\"$DOKPLOY_HUB_COMPOSE_ID\",\"title\":\"GitHub Actions $short_sha\",\"description\":\"Redeploy tethon-hub after GHCR image publish.\"}"
 
       - name: Trigger hostd redeploy
         env:
-          DOKPLOY_HOSTD_WEBHOOK_URL: ${{ secrets.DOKPLOY_HOSTD_WEBHOOK_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
+          DOKPLOY_HOSTD_COMPOSE_ID: ${{ vars.DOKPLOY_HOSTD_COMPOSE_ID }}
         run: |
-          if [ -z "$DOKPLOY_HOSTD_WEBHOOK_URL" ]; then
-            echo "DOKPLOY_HOSTD_WEBHOOK_URL is not set; skipping hostd redeploy."
+          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HOSTD_COMPOSE_ID" ]; then
+            echo "Dokploy hostd API config is incomplete; skipping hostd redeploy."
             exit 0
           fi
-          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
-            --request POST "$DOKPLOY_HOSTD_WEBHOOK_URL"
+          base_url="${DOKPLOY_BASE_URL%/}"
+          short_sha="${GITHUB_SHA::12}"
+          curl --fail-with-body --silent --show-error --retry 3 --retry-delay 5 \
+            --request POST "$base_url/api/compose.redeploy" \
+            --header "x-api-key: $DOKPLOY_API_KEY" \
+            --header "Content-Type: application/json" \
+            --data "{\"composeId\":\"$DOKPLOY_HOSTD_COMPOSE_ID\",\"title\":\"GitHub Actions $short_sha\",\"description\":\"Redeploy tethon-hostd after GHCR image publish.\"}"

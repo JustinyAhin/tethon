@@ -1,7 +1,7 @@
 # CI Deploy
 
 GitHub Actions publishes the hub and VPS host daemon images on every push to
-`main`, then calls Dokploy deploy webhooks when they are configured.
+`main`, then calls Dokploy's Compose API when it is configured.
 
 This replaces Dokploy's Git push auto-deploy for the hub and VPS hostd
 services. Leave Dokploy's repository source configured so it can read the
@@ -46,17 +46,29 @@ TETHON_HOSTD_IMAGE=ghcr.io/justinyahin/tethon-hostd:<short-sha>
 
 Remove the override to return to the latest `main` image.
 
-## Required GitHub Secrets
+## Required GitHub Configuration
 
-Set these repository secrets after creating Dokploy deploy webhooks:
+Create a Dokploy API key, then set this repository secret:
 
 ```txt
-DOKPLOY_HUB_WEBHOOK_URL=<hub deploy webhook URL>
-DOKPLOY_HOSTD_WEBHOOK_URL=<hostd deploy webhook URL>
+DOKPLOY_API_KEY=<Dokploy API key>
 ```
 
-If either secret is missing, that redeploy step is skipped. Image publishing
-still happens.
+Set these repository variables:
+
+```txt
+DOKPLOY_BASE_URL=https://dokploy.example.com
+DOKPLOY_HUB_COMPOSE_ID=QTPBoNrmWM0KsEJ63DmEF
+DOKPLOY_HOSTD_COMPOSE_ID=WThL5RaCy4zvffm9asslY
+```
+
+The workflow calls `POST /api/compose.redeploy` with the matching `composeId`.
+Keep Dokploy auto-deploy disabled for both Compose services; the old
+`/api/deploy/compose/...` webhook URLs return `Automatic deployments are
+disabled for this compose` when auto-deploy is off.
+
+If the API key, base URL, or a compose ID is missing, that redeploy step is
+skipped. Image publishing still happens.
 
 ## Self-Update Behavior
 

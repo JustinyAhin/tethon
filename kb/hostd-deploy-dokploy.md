@@ -4,7 +4,7 @@ This is the minimal VPS hostd bring-up note for `deploy/hostd/`. The full
 runbook polish belongs with ttb.5.
 
 The compose file defaults to the `ghcr.io/justinyahin/tethon-hostd:main` image
-published by CI. See `kb/ci-deploy.md` for Dokploy webhook setup, rollback, and
+published by CI. See `kb/ci-deploy.md` for Dokploy API setup, rollback, and
 self-update behavior.
 
 GitHub container packages are private by default. Configure Dokploy registry

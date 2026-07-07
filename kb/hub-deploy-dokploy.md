@@ -29,7 +29,7 @@ hub for now.
 - `deploy/hub/docker-compose.yml` - Dokploy Compose service with the persistent
   `hub-data` volume mounted at `/var/lib/tethon`. It defaults to the
   `ghcr.io/justinyahin/tethon-hub:main` image published by CI.
-- `kb/ci-deploy.md` - CI image publishing, Dokploy webhook, and rollback notes.
+- `kb/ci-deploy.md` - CI image publishing, Dokploy API, and rollback notes.
 
 ## Dokploy Setup
 
