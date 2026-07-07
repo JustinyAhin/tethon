@@ -15,7 +15,10 @@
     },
     "ios": {
       "icon": "./assets/images/icon.png",
-      "bundleIdentifier": "dev.tethon.app"
+      "bundleIdentifier": "dev.tethon.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
