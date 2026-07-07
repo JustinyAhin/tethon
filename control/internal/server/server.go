@@ -23,19 +23,32 @@ import (
 )
 
 const defaultResourceSnapshotTimeout = 2 * time.Second
+const approvalNotificationTimeout = 5 * time.Second
+
+type ApprovalNotification struct {
+	SessionID string
+	RequestID string
+	Agent     string
+	Repo      string
+	ToolName  string
+	Command   string
+}
+
+type ApprovalNotifier func(context.Context, ApprovalNotification) error
 
 type Server struct {
-	store           *sessionlog.Store
-	broker          *broker
-	agents          *agent.Registry
-	repos           *repo.Registry
-	worktrees       *worktree.Manager
-	repoRoots       []string
-	resources       resource.Collector
-	resourceTimeout time.Duration
-	logger          *slog.Logger
-	running         map[string]agent.RunningSession
-	runningM        sync.RWMutex
+	store            *sessionlog.Store
+	broker           *broker
+	agents           *agent.Registry
+	repos            *repo.Registry
+	worktrees        *worktree.Manager
+	repoRoots        []string
+	resources        resource.Collector
+	resourceTimeout  time.Duration
+	approvalNotifier ApprovalNotifier
+	logger           *slog.Logger
+	running          map[string]agent.RunningSession
+	runningM         sync.RWMutex
 }
 
 type Config struct {
@@ -45,6 +58,7 @@ type Config struct {
 	RepoRoots         []string
 	ResourceCollector resource.Collector
 	ResourceTimeout   time.Duration
+	ApprovalNotifier  ApprovalNotifier
 	Logger            *slog.Logger
 }
 
@@ -88,16 +102,17 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 		repoRoots = append(repoRoots, filepath.Clean(realPath))
 	}
 	return &Server{
-		store:           store,
-		broker:          newBroker(),
-		agents:          agents,
-		repos:           config.Repos,
-		worktrees:       config.Worktrees,
-		repoRoots:       repoRoots,
-		resources:       resources,
-		resourceTimeout: resourceTimeout,
-		logger:          logger,
-		running:         make(map[string]agent.RunningSession),
+		store:            store,
+		broker:           newBroker(),
+		agents:           agents,
+		repos:            config.Repos,
+		worktrees:        config.Worktrees,
+		repoRoots:        repoRoots,
+		resources:        resources,
+		resourceTimeout:  resourceTimeout,
+		approvalNotifier: config.ApprovalNotifier,
+		logger:           logger,
+		running:          make(map[string]agent.RunningSession),
 	}
 }
 
@@ -800,7 +815,68 @@ func (s *Server) appendEvent(ctx context.Context, sessionID, eventType string, p
 		return protocol.Event{}, err
 	}
 	s.broker.publish(event)
+	if eventType == protocol.EventAwaitingApproval && s.approvalNotifier != nil {
+		s.notifyApproval(ctx, sessionID, payload)
+	}
 	return event, nil
+}
+
+func (s *Server) notifyApproval(ctx context.Context, sessionID string, payload any) {
+	approval, err := approvalPayload(payload)
+	if err != nil {
+		s.logger.Warn("approval_push_notify_skipped", "session_id", sessionID, "error", err.Error())
+		return
+	}
+	session, err := s.store.GetSession(ctx, sessionID)
+	if err != nil {
+		s.logger.Warn("approval_push_notify_skipped", "session_id", sessionID, "request_id", approval.RequestID, "error", err.Error())
+		return
+	}
+	repoName := session.Repo
+	if repo, ok := s.repos.Get(session.RepoID); ok && repo.Name != "" {
+		repoName = repo.Name
+	}
+	agentName := approval.Agent
+	if agentName == "" {
+		agentName = session.Agent
+	}
+	notification := ApprovalNotification{
+		SessionID: sessionID,
+		RequestID: approval.RequestID,
+		Agent:     agentName,
+		Repo:      repoName,
+		ToolName:  approval.ToolName,
+		Command:   approval.Command,
+	}
+	go func() {
+		notifyCtx, cancel := context.WithTimeout(context.Background(), approvalNotificationTimeout)
+		defer cancel()
+		if err := s.approvalNotifier(notifyCtx, notification); err != nil {
+			s.logger.Warn("approval_push_notify_failed", "session_id", notification.SessionID, "request_id", notification.RequestID, "error", err.Error())
+		}
+	}()
+}
+
+func approvalPayload(payload any) (protocol.ApprovalPayload, error) {
+	switch payload := payload.(type) {
+	case protocol.ApprovalPayload:
+		return payload, nil
+	case *protocol.ApprovalPayload:
+		if payload == nil {
+			return protocol.ApprovalPayload{}, errors.New("approval payload is nil")
+		}
+		return *payload, nil
+	default:
+		var approval protocol.ApprovalPayload
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return protocol.ApprovalPayload{}, err
+		}
+		if err := json.Unmarshal(data, &approval); err != nil {
+			return protocol.ApprovalPayload{}, err
+		}
+		return approval, nil
+	}
 }
 
 func (s *Server) setRunning(sessionID string, running agent.RunningSession) {

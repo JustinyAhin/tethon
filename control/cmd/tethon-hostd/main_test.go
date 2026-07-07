@@ -209,6 +209,42 @@ func TestPostJSONSendsHubAuthToken(t *testing.T) {
 	}
 }
 
+func TestHubClientNotifiesApproval(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/hosts/mac-mini/notify/approval" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Fatalf("Authorization = %q, want Bearer secret", got)
+		}
+		var req protocol.PushApprovalTestRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.HostID != "mac-mini" || req.SessionID != "ses_1" || req.RequestID != "approval_1" || req.Agent != "fake" || req.Repo != "tethon" || req.ToolName != "Bash" || req.Command != "git status" {
+			t.Fatalf("request = %+v", req)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(ts.Close)
+
+	client := newHubClient(ts.URL, "secret", ts.Client())
+	err := client.notifyApproval(context.Background(), "mac-mini", protocol.PushApprovalTestRequest{
+		SessionID: "ses_1",
+		RequestID: "approval_1",
+		Agent:     "fake",
+		Repo:      "tethon",
+		ToolName:  "Bash",
+		Command:   "git status",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHubClientUsesConfiguredTimeout(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)

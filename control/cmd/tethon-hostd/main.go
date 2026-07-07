@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,7 +155,18 @@ func run() error {
 		Repos:     registry,
 		Worktrees: worktrees,
 		RepoRoots: registry.Paths(),
-		Logger:    logger,
+		ApprovalNotifier: func(ctx context.Context, n server.ApprovalNotification) error {
+			return hub.notifyApproval(ctx, *hostID, protocol.PushApprovalTestRequest{
+				HostID:    *hostID,
+				SessionID: n.SessionID,
+				RequestID: n.RequestID,
+				Agent:     n.Agent,
+				Repo:      n.Repo,
+				ToolName:  n.ToolName,
+				Command:   n.Command,
+			})
+		},
+		Logger: logger,
 	})
 	if err := hostServer.Recover(ctx); err != nil {
 		logger.Error("session_recovery_failed", "error", err.Error())
@@ -632,6 +644,11 @@ func (c *hubClient) registerHost(ctx context.Context, req protocol.RegisterHostR
 
 func (c *hubClient) heartbeat(ctx context.Context, hostID string) error {
 	return c.postJSON(ctx, c.baseURL+"/hosts/"+hostID+"/heartbeat", map[string]string{})
+}
+
+func (c *hubClient) notifyApproval(ctx context.Context, hostID string, req protocol.PushApprovalTestRequest) error {
+	req.HostID = hostID
+	return c.postJSON(ctx, c.baseURL+"/hosts/"+url.PathEscape(hostID)+"/notify/approval", req)
 }
 
 func (c *hubClient) postJSON(ctx context.Context, target string, value any) error {

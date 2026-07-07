@@ -391,13 +391,51 @@ func (s *Server) sendApprovalTestPushHuma(ctx context.Context, input *pushApprov
 	if err := validatePushApprovalTest(input.Body); err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
-	resp, err := s.sendPush(ctx, func(devices []ExpoDevice) (protocol.PushTestResponse, error) {
-		return s.push.SendApproval(ctx, devices, input.Body)
-	})
+	resp, err := s.sendApprovalPush(ctx, input.Body)
 	if err != nil {
 		return nil, err
 	}
 	return &pushTestOutput{Body: resp}, nil
+}
+
+func (s *Server) handleApprovalNotify(w http.ResponseWriter, r *http.Request, hostID string) {
+	var req protocol.PushApprovalTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.HostID = hostID
+	if err := validatePushApprovalTest(req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.approvalPushDuplicate(req) {
+		writeJSON(w, http.StatusOK, protocol.PushTestResponse{})
+		return
+	}
+	resp, err := s.sendApprovalPush(r.Context(), req)
+	if err != nil {
+		writeHubStatusError(w, err)
+		return
+	}
+	s.recordApprovalPush(req)
+	s.logger.Info("hub_approval_push_sent",
+		"host_id", req.HostID,
+		"session_id", req.SessionID,
+		"request_id", req.RequestID,
+		"registered", resp.Registered,
+		"attempted", resp.Attempted,
+		"accepted", resp.Accepted,
+		"rejected", resp.Rejected,
+	)
+	writeJSON(w, http.StatusAccepted, resp)
+}
+
+func (s *Server) sendApprovalPush(ctx context.Context, req protocol.PushApprovalTestRequest) (protocol.PushTestResponse, error) {
+	resp, err := s.sendPush(ctx, func(devices []ExpoDevice) (protocol.PushTestResponse, error) {
+		return s.push.SendApproval(ctx, devices, req)
+	})
+	return resp, err
 }
 
 func (s *Server) sendPush(ctx context.Context, send func([]ExpoDevice) (protocol.PushTestResponse, error)) (protocol.PushTestResponse, error) {
@@ -424,6 +462,50 @@ func (s *Server) sendPush(ctx context.Context, send func([]ExpoDevice) (protocol
 		}
 	}
 	return resp, nil
+}
+
+func (s *Server) approvalPushDuplicate(req protocol.PushApprovalTestRequest) bool {
+	key := approvalPushDedupeKey(req)
+	s.mu.RLock()
+	_, ok := s.approvalPushKeys[key]
+	s.mu.RUnlock()
+	return ok
+}
+
+func (s *Server) recordApprovalPush(req protocol.PushApprovalTestRequest) {
+	key := approvalPushDedupeKey(req)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.approvalPushKeys[key]; ok {
+		return
+	}
+	s.approvalPushKeys[key] = struct{}{}
+	s.approvalPushOrder = append(s.approvalPushOrder, key)
+	for len(s.approvalPushOrder) > approvalPushDedupeLimit {
+		oldest := s.approvalPushOrder[0]
+		s.approvalPushOrder = s.approvalPushOrder[1:]
+		delete(s.approvalPushKeys, oldest)
+	}
+}
+
+func approvalPushDedupeKey(req protocol.PushApprovalTestRequest) string {
+	return strings.Join([]string{
+		strings.TrimSpace(req.HostID),
+		strings.TrimSpace(req.SessionID),
+		strings.TrimSpace(req.RequestID),
+	}, "\x00")
+}
+
+func writeHubStatusError(w http.ResponseWriter, err error) {
+	type statusError interface {
+		error
+		GetStatus() int
+	}
+	if err, ok := err.(statusError); ok {
+		writeError(w, err.GetStatus(), err.Error())
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
 }
 
 func (s *Server) listHostsHuma(_ context.Context, _ *struct{}) (*listHostsOutput, error) {

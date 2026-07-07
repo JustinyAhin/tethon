@@ -20,15 +20,17 @@ import (
 )
 
 type Server struct {
-	mu          sync.RWMutex
-	hosts       map[string]hostRecord
-	reverse     map[string]*reverseConnection
-	hostTimeout time.Duration
-	now         func() time.Time
-	authTokens  [][sha256.Size]byte
-	devices     *DeviceStore
-	push        PushSender
-	logger      *slog.Logger
+	mu                sync.RWMutex
+	hosts             map[string]hostRecord
+	reverse           map[string]*reverseConnection
+	approvalPushKeys  map[string]struct{}
+	approvalPushOrder []string
+	hostTimeout       time.Duration
+	now               func() time.Time
+	authTokens        [][sha256.Size]byte
+	devices           *DeviceStore
+	push              PushSender
+	logger            *slog.Logger
 }
 
 type hostRecord struct {
@@ -37,17 +39,19 @@ type hostRecord struct {
 }
 
 const sessionListFanoutTimeout = 5 * time.Second
+const approvalPushDedupeLimit = 256
 
 func New(hostTimeout time.Duration) *Server {
 	if hostTimeout <= 0 {
 		hostTimeout = 30 * time.Second
 	}
 	return &Server{
-		hosts:       make(map[string]hostRecord),
-		reverse:     make(map[string]*reverseConnection),
-		hostTimeout: hostTimeout,
-		now:         time.Now,
-		logger:      slog.Default(),
+		hosts:            make(map[string]hostRecord),
+		reverse:          make(map[string]*reverseConnection),
+		approvalPushKeys: make(map[string]struct{}),
+		hostTimeout:      hostTimeout,
+		now:              time.Now,
+		logger:           slog.Default(),
 	}
 }
 
@@ -67,6 +71,10 @@ func (s *Server) Handler() http.Handler {
 			s.handleReverseConnect(w, r, hostID)
 			return
 		}
+		if hostID, ok := approvalNotifyHostID(r); ok {
+			s.handleApprovalNotify(w, r, hostID)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -81,6 +89,18 @@ func reverseConnectHostID(r *http.Request) (string, bool) {
 	}
 	hostID, suffix, ok := strings.Cut(rest, "/")
 	return hostID, ok && hostID != "" && suffix == "connect"
+}
+
+func approvalNotifyHostID(r *http.Request) (string, bool) {
+	if r.Method != http.MethodPost {
+		return "", false
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/hosts/")
+	if rest == r.URL.Path {
+		return "", false
+	}
+	hostID, suffix, ok := strings.Cut(rest, "/")
+	return hostID, ok && hostID != "" && suffix == "notify/approval"
 }
 
 func (s *Server) handleReverseConnect(w http.ResponseWriter, r *http.Request, hostID string) {

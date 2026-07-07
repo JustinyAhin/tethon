@@ -18,6 +18,7 @@ import (
 
 	"tethon/internal/agent"
 	"tethon/internal/protocol"
+	"tethon/internal/repo"
 	"tethon/internal/resource"
 	"tethon/internal/sessionlog"
 )
@@ -50,6 +51,85 @@ func TestFakeAgentUsesUniqueApprovalIDsAcrossSessions(t *testing.T) {
 	if firstRequestID == secondRequestID {
 		t.Fatalf("approval request ids should be unique, both were %q", firstRequestID)
 	}
+}
+
+func TestAwaitingApprovalNotifiesWithContext(t *testing.T) {
+	repoPath := t.TempDir()
+	registry, err := repo.NewRegistry(repo.Repo{ID: "repo-1", Name: "Tethon", Path: repoPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifications := make(chan ApprovalNotification, 1)
+	ts := newTestServerWithConfig(t, Config{
+		Agents: agent.NewRegistry(agent.NewFake()),
+		Repos:  registry,
+		ApprovalNotifier: func(_ context.Context, n ApprovalNotification) error {
+			notifications <- n
+			return nil
+		},
+	})
+
+	var created protocol.CreateSessionResponse
+	postJSONInto(t, ts.URL+"/sessions", protocol.CreateSessionRequest{RepoID: "repo-1", Agent: "fake"}, &created)
+
+	select {
+	case got := <-notifications:
+		if got.SessionID != created.ID {
+			t.Fatalf("session_id = %q, want %q", got.SessionID, created.ID)
+		}
+		if got.RequestID != "approval_bootstrap_"+created.ID {
+			t.Fatalf("request_id = %q", got.RequestID)
+		}
+		if got.Agent != "fake" || got.Repo != "Tethon" || got.Command != "fake risky command" {
+			t.Fatalf("notification = %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for approval notification")
+	}
+}
+
+func TestAwaitingApprovalWithNilNotifierDoesNotPanic(t *testing.T) {
+	ts := newTestServerWithConfig(t, Config{Agents: agent.NewRegistry(agent.NewFake())})
+
+	session := postSession(t, ts.URL)
+	events := streamEvents(t, ts.URL, session.ID, 0, 3)
+	assertTypes(t, events, []string{
+		protocol.EventSessionStarted,
+		protocol.EventOutput,
+		protocol.EventAwaitingApproval,
+	})
+}
+
+func TestAwaitingApprovalNotifierDoesNotBlockAppend(t *testing.T) {
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	ts := newTestServerWithConfig(t, Config{
+		Agents: agent.NewRegistry(agent.NewFake()),
+		ApprovalNotifier: func(ctx context.Context, _ ApprovalNotification) error {
+			close(blocked)
+			select {
+			case <-release:
+				return context.Canceled
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+
+	session := postSession(t, ts.URL)
+	events := streamEvents(t, ts.URL, session.ID, 0, 3)
+	assertTypes(t, events, []string{
+		protocol.EventSessionStarted,
+		protocol.EventOutput,
+		protocol.EventAwaitingApproval,
+	})
+
+	select {
+	case <-blocked:
+	case <-time.After(time.Second):
+		t.Fatal("notifier was not called")
+	}
+	close(release)
 }
 
 func TestStreamReconnectFromCursorReturnsOnlyLaterEvents(t *testing.T) {

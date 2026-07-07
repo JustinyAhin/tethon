@@ -220,6 +220,91 @@ func TestHubSendsApprovalTestPushAndDisablesUnregisteredDevice(t *testing.T) {
 	}
 }
 
+func TestHubApprovalNotifySendsPushDedupesAndDisablesUnregisteredDevice(t *testing.T) {
+	hub := New(time.Second)
+	store := newTestDeviceStore(t)
+	sender := &recordingPushSender{
+		approvalResponse: protocol.PushTestResponse{
+			Registered: 2,
+			Attempted:  2,
+			Accepted:   1,
+			Rejected:   1,
+			Rejections: []protocol.PushTestRejection{{
+				DeviceID: "phone-2",
+				Code:     expoDeviceNotRegister,
+				Message:  "not registered",
+			}},
+		},
+	}
+	hub.SetAuthToken("secret")
+	hub.SetDeviceStore(store)
+	hub.SetPushSender(sender)
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	for _, req := range []protocol.RegisterDeviceRequest{
+		{DeviceID: "phone-1", PushService: "expo", PushToken: "ExpoPushToken[1]", Platform: "ios"},
+		{DeviceID: "phone-2", PushService: "expo", PushToken: "ExpoPushToken[2]", Platform: "android"},
+	} {
+		postJSONAuth(t, ts.URL+"/devices/register", "secret", req)
+	}
+
+	req := protocol.PushApprovalTestRequest{
+		SessionID: "ses_1",
+		RequestID: "approval_1",
+		Agent:     "claude-cli",
+		Repo:      "tethon",
+		ToolName:  "Bash",
+		Command:   "rm -rf /tmp/example",
+	}
+	var resp protocol.PushTestResponse
+	postJSONIntoAuth(t, ts.URL+"/hosts/mac/notify/approval", "secret", req, &resp)
+	if resp.Registered != 2 || resp.Accepted != 1 || resp.Rejected != 1 {
+		t.Fatalf("notify push response = %+v", resp)
+	}
+	if sender.approvalCalls != 1 {
+		t.Fatalf("approval calls = %d, want 1", sender.approvalCalls)
+	}
+	if got := sender.approvalRequests[0].HostID; got != "mac" {
+		t.Fatalf("host_id = %q, want path host", got)
+	}
+
+	assertPostStatus(t, ts.URL+"/hosts/mac/notify/approval", "secret", req, http.StatusOK)
+	if sender.approvalCalls != 1 {
+		t.Fatalf("duplicate approval calls = %d, want 1", sender.approvalCalls)
+	}
+
+	req.RequestID = "approval_2"
+	assertPostStatus(t, ts.URL+"/hosts/mac/notify/approval", "secret", req, http.StatusAccepted)
+	if sender.approvalCalls != 2 {
+		t.Fatalf("new request approval calls = %d, want 2", sender.approvalCalls)
+	}
+
+	devices, err := store.ActiveExpoDevices(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 1 || devices[0].DeviceID != "phone-1" {
+		t.Fatalf("active devices after rejection = %#v", devices)
+	}
+}
+
+func TestHubApprovalNotifyRequiresAuthValidContextAndPushConfig(t *testing.T) {
+	hub := New(time.Second)
+	hub.SetAuthToken("secret")
+	hub.SetDeviceStore(newTestDeviceStore(t))
+	ts := httptest.NewServer(hub.Handler())
+	t.Cleanup(ts.Close)
+
+	req := protocol.PushApprovalTestRequest{
+		SessionID: "ses_1",
+		RequestID: "approval_1",
+	}
+	assertStatus(t, http.MethodPost, ts.URL+"/hosts/mac/notify/approval", "", http.StatusUnauthorized)
+	assertPostStatus(t, ts.URL+"/hosts/mac/notify/approval", "secret", protocol.PushApprovalTestRequest{}, http.StatusBadRequest)
+	assertPostStatus(t, ts.URL+"/hosts/mac/notify/approval", "secret", req, http.StatusServiceUnavailable)
+}
+
 func TestHubTestPushRequiresAuthAndConfiguredSender(t *testing.T) {
 	hub := New(time.Second)
 	hub.SetAuthToken("secret")
@@ -954,5 +1039,23 @@ func (f fakePushSender) SendTest(context.Context, []ExpoDevice, protocol.PushTes
 }
 
 func (f fakePushSender) SendApproval(context.Context, []ExpoDevice, protocol.PushApprovalTestRequest) (protocol.PushTestResponse, error) {
+	return f.approvalResponse, f.err
+}
+
+type recordingPushSender struct {
+	response         protocol.PushTestResponse
+	approvalResponse protocol.PushTestResponse
+	err              error
+	approvalCalls    int
+	approvalRequests []protocol.PushApprovalTestRequest
+}
+
+func (f *recordingPushSender) SendTest(context.Context, []ExpoDevice, protocol.PushTestRequest) (protocol.PushTestResponse, error) {
+	return f.response, f.err
+}
+
+func (f *recordingPushSender) SendApproval(_ context.Context, _ []ExpoDevice, req protocol.PushApprovalTestRequest) (protocol.PushTestResponse, error) {
+	f.approvalCalls++
+	f.approvalRequests = append(f.approvalRequests, req)
 	return f.approvalResponse, f.err
 }
