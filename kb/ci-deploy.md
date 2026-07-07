@@ -58,14 +58,15 @@ Set these repository variables:
 
 ```txt
 DOKPLOY_BASE_URL=https://dokploy.example.com
-DOKPLOY_HUB_COMPOSE_ID=QTPBoNrmWM0KsEJ63DmEF
-DOKPLOY_HOSTD_COMPOSE_ID=WThL5RaCy4zvffm9asslY
+DOKPLOY_HUB_COMPOSE_ID=GYXGPmjN1L5BgGAbGw5b4
+DOKPLOY_HOSTD_COMPOSE_ID=ma5twaFdUo_PN3jZMra16
 ```
 
 The workflow calls `POST /api/compose.redeploy` with the matching `composeId`.
 Keep Dokploy auto-deploy disabled for both Compose services; the old
-`/api/deploy/compose/...` webhook URLs return `Automatic deployments are
-disabled for this compose` when auto-deploy is off.
+`/api/deploy/compose/...` webhook URLs use each service's `refreshToken`, not
+the internal `composeId`, and return `Automatic deployments are disabled for
+this compose` when auto-deploy is off.
 
 If the API key, base URL, or a compose ID is missing, that redeploy step is
 skipped. Image publishing still happens.
