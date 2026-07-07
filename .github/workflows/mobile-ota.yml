@@ -1,0 +1,56 @@
+name: Mobile OTA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/mobile-ota.yml
+      - mobile/**
+      - packages/hub-sdk/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ota-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-preview-update:
+    name: Publish preview update
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install dependencies
+        working-directory: .
+        run: bun install --frozen-lockfile
+
+      - name: Check for EXPO_TOKEN
+        env:
+          HAS_EXPO_TOKEN: ${{ secrets.EXPO_TOKEN != '' }}
+        run: |
+          if [ "$HAS_EXPO_TOKEN" != "true" ]; then
+            echo "::error::EXPO_TOKEN repository secret is missing. Create an Expo access token and add it only to GitHub Actions secrets."
+            exit 1
+          fi
+
+      - name: Log fingerprint runtime hash
+        run: |
+          bunx @expo/fingerprint fingerprint:generate --platform ios --platform android \
+            | jq -r '"EAS fingerprint runtime hash: \(.hash)"'
+
+      - name: Publish preview update
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: bunx eas-cli update --branch preview --auto --environment preview --non-interactive

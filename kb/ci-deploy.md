@@ -52,13 +52,38 @@ TETHON_HOSTD_IMAGE=ghcr.io/justinyahin/tethon-hostd:<short-sha>
 
 Remove the override to return to the latest `main` image.
 
+## Mobile OTA
+
+The workflow at `.github/workflows/mobile-ota.yml` publishes Expo OTA updates
+for the dogfood phone build. It runs on pushes to `main` when files under
+`mobile/` or `packages/hub-sdk/` change, and it can also be run manually with
+`workflow_dispatch`. Server-only pushes do not publish mobile updates.
+
+The workflow installs dependencies with Bun, logs the current Expo fingerprint
+runtime hash, then publishes to the EAS `preview` branch with the `preview`
+environment:
+
+```txt
+bunx eas-cli update --branch preview --auto --environment preview --non-interactive
+```
+
+Because the app uses `runtimeVersion.policy = fingerprint`, OTA updates only
+apply to preview binaries with a matching native runtime fingerprint. Changes to
+native modules, config plugins, native project files, or native app config need
+a new EAS build before installed preview apps can receive the JS update.
+
 ## Required GitHub Configuration
 
 Create a Dokploy API key, then set this repository secret:
 
 ```txt
 DOKPLOY_API_KEY=<Dokploy API key>
+EXPO_TOKEN=<Expo access token for publishing EAS updates>
 ```
+
+Keep `EXPO_TOKEN` only in GitHub Actions secrets. Do not add it to Dokploy,
+hostd, or any agent session environment; CI is the only mobile publish
+authority.
 
 Set these repository variables:
 

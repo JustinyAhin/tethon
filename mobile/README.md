@@ -24,8 +24,13 @@ eas build --profile preview --platform ios
 Publish JS, TS, styling, and asset-only changes to the dogfood build with:
 
 ```bash
-eas update --channel preview --message "<message>" --environment preview
+eas update --branch preview --message "<message>" --environment preview
 ```
+
+On `main`, GitHub Actions publishes this automatically when files under
+`mobile/` or `packages/hub-sdk/` change. The repository must have an
+`EXPO_TOKEN` Actions secret; keep that token out of hostd and Dokploy runtime
+environments so agent sessions cannot publish mobile updates directly.
 
 The preview app checks for updates on launch. To verify an update, force close
 and reopen the installed app up to two times; the downloaded update applies on
