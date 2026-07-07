@@ -487,6 +487,39 @@ func TestHubCreatesSessionAndStreamsReplayThroughHost(t *testing.T) {
 	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})
 }
 
+func TestHubStreamsLargeEventsThroughReverseConnection(t *testing.T) {
+	store, err := sessionlog.Open(context.Background(), filepath.Join(t.TempDir(), "hostd.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	session, err := store.CreateSession(context.Background(), sessionlog.CreateSessionParams{Repo: ".", Agent: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("x", 40*1024)
+	if _, err := store.AppendEvent(context.Background(), session.ID, protocol.EventOutput, protocol.OutputPayload{Text: payload}); err != nil {
+		t.Fatal(err)
+	}
+
+	hostTS := httptest.NewServer(hostserver.New(store).Handler())
+	t.Cleanup(hostTS.Close)
+	hubTS := httptest.NewServer(New(time.Second).Handler())
+	t.Cleanup(hubTS.Close)
+
+	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{HostID: "mac", URL: hostTS.URL})
+	connectReverseHost(t, hubTS.URL, "mac", "", hostTS.Config.Handler)
+
+	events := streamEvents(t, hubTS.URL, "mac/"+session.ID, 0, 1)
+	var got protocol.OutputPayload
+	if err := json.Unmarshal(events[0].Payload, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != payload {
+		t.Fatalf("large payload len = %d, want %d", len(got.Text), len(payload))
+	}
+}
+
 func TestHubListsSessionsAcrossOnlineHosts(t *testing.T) {
 	hub := httptest.NewServer(New(time.Second).Handler())
 	t.Cleanup(hub.Close)

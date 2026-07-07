@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"tethon/internal/protocol"
+	"tethon/internal/reverse"
 )
 
 type Server struct {
@@ -113,6 +114,7 @@ func (s *Server) handleReverseConnect(w http.ResponseWriter, r *http.Request, ho
 		s.logger.Warn("hub_reverse_accept_failed", "host_id", hostID, "error", err.Error())
 		return
 	}
+	conn.SetReadLimit(reverse.MaxFrameBytes)
 	reverse := newReverseConnection(s, hostID, conn)
 	s.setReverseConnection(hostID, reverse)
 	s.logger.Info("hub_reverse_connected", "host_id", hostID)

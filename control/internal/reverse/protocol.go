@@ -12,6 +12,11 @@ const (
 	FrameResponseError = "response_error"
 )
 
+// MaxFrameBytes bounds one JSON websocket frame on the reverse transport. The
+// default coder/websocket read limit is 32 KiB, which is too small for streamed
+// session events containing tool results or transcripts.
+const MaxFrameBytes int64 = 8 << 20
+
 type Frame struct {
 	Type      string      `json:"type"`
 	RequestID string      `json:"request_id,omitempty"`

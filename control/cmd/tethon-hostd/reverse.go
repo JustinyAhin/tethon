@@ -99,6 +99,7 @@ func (c *hubClient) connectReverse(ctx context.Context, hostID string, handler h
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(reverse.MaxFrameBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "hostd reverse connection closed")
 	if onConnected != nil {
 		onConnected()
