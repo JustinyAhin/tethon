@@ -16,6 +16,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   go-checks:
@@ -46,27 +47,118 @@ jobs:
       - name: Test
         run: go test ./...
 
-  publish-images:
-    name: Build and publish images
+  detect-changes:
+    name: Detect image changes
     runs-on: ubuntu-latest
-    needs: go-checks
-    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     outputs:
-      hub-image: ${{ steps.names.outputs.hub-image }}
-      hostd-image: ${{ steps.names.outputs.hostd-image }}
+      hub_image_changed: ${{ steps.filter.outputs.hub_image_changed }}
+      hostd_image_changed: ${{ steps.filter.outputs.hostd_image_changed }}
+      hub_deploy_changed: ${{ steps.filter.outputs.hub_deploy_changed }}
+      hostd_deploy_changed: ${{ steps.filter.outputs.hostd_deploy_changed }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        shell: bash
+        run: |
+          hub_image_changed=false
+          hostd_image_changed=false
+          hub_deploy_changed=false
+          hostd_deploy_changed=false
+
+          set_all_changed() {
+            hub_image_changed=true
+            hostd_image_changed=true
+            hub_deploy_changed=true
+            hostd_deploy_changed=true
+          }
+
+          mark_path() {
+            case "$1" in
+              .github/workflows/control-images.yml)
+                set_all_changed
+                ;;
+              control/go.mod|control/go.sum)
+                hub_image_changed=true
+                hostd_image_changed=true
+                ;;
+              control/cmd/tethon-hub/*|control/internal/hub/*)
+                hub_image_changed=true
+                ;;
+              control/cmd/tethon-hostd/*|control/internal/server/*|control/internal/sessionlog/*|control/internal/worktree/*|control/internal/repo/*)
+                hostd_image_changed=true
+                ;;
+              control/internal/protocol/*|control/internal/reverse/*|control/internal/agent/*|control/internal/resource/*)
+                hub_image_changed=true
+                hostd_image_changed=true
+                ;;
+              deploy/hub/Dockerfile)
+                hub_image_changed=true
+                ;;
+              deploy/hostd/Dockerfile)
+                hostd_image_changed=true
+                ;;
+              deploy/hub/docker-compose.yml)
+                hub_deploy_changed=true
+                ;;
+              deploy/hostd/docker-compose.yml)
+                hostd_deploy_changed=true
+                ;;
+            esac
+          }
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            set_all_changed
+          else
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              base="${{ github.event.pull_request.base.sha }}"
+              head="${{ github.event.pull_request.head.sha }}"
+            else
+              base="${{ github.event.before }}"
+              head="${{ github.sha }}"
+            fi
+
+            if [[ "$base" =~ ^0+$ ]]; then
+              set_all_changed
+            else
+              git diff --name-only "$base" "$head" > changed-files.txt
+              while IFS= read -r changed_path; do
+                mark_path "$changed_path"
+              done < changed-files.txt
+            fi
+          fi
+
+          echo "hub_image_changed=$hub_image_changed" >> "$GITHUB_OUTPUT"
+          echo "hostd_image_changed=$hostd_image_changed" >> "$GITHUB_OUTPUT"
+          echo "hub_deploy_changed=$hub_deploy_changed" >> "$GITHUB_OUTPUT"
+          echo "hostd_deploy_changed=$hostd_deploy_changed" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Change detection"
+            echo "- hub image: $hub_image_changed"
+            echo "- hostd image: $hostd_image_changed"
+            echo "- hub deploy: $hub_deploy_changed"
+            echo "- hostd deploy: $hostd_deploy_changed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-hub-image:
+    name: Build and publish hub image
+    runs-on: ubuntu-latest
+    needs: [go-checks, detect-changes]
+    if: ${{ github.event_name != 'pull_request' && needs.detect-changes.outputs.hub_image_changed == 'true' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
 
       - name: Compute image names
-        id: names
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           short_sha="${GITHUB_SHA::12}"
-          echo "hub-image=${REGISTRY}/${owner}/tethon-hub:${short_sha}" >> "$GITHUB_OUTPUT"
-          echo "hostd-image=${REGISTRY}/${owner}/tethon-hostd:${short_sha}" >> "$GITHUB_OUTPUT"
           echo "HUB_IMAGE=${REGISTRY}/${owner}/tethon-hub" >> "$GITHUB_ENV"
-          echo "HOSTD_IMAGE=${REGISTRY}/${owner}/tethon-hostd" >> "$GITHUB_ENV"
           echo "SHORT_SHA=${short_sha}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
@@ -84,7 +176,7 @@ jobs:
         with:
           context: .
           file: deploy/hub/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.PLATFORMS }}
           push: true
           tags: |
             ${{ env.HUB_IMAGE }}:main
@@ -92,12 +184,38 @@ jobs:
           cache-from: type=gha,scope=tethon-hub
           cache-to: type=gha,mode=max,scope=tethon-hub
 
+  publish-hostd-image:
+    name: Build and publish hostd image
+    runs-on: ubuntu-latest
+    needs: [go-checks, detect-changes]
+    if: ${{ github.event_name != 'pull_request' && needs.detect-changes.outputs.hostd_image_changed == 'true' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Compute image names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          short_sha="${GITHUB_SHA::12}"
+          echo "HOSTD_IMAGE=${REGISTRY}/${owner}/tethon-hostd" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${short_sha}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push hostd image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/hostd/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.PLATFORMS }}
           push: true
           tags: |
             ${{ env.HOSTD_IMAGE }}:main
@@ -105,11 +223,11 @@ jobs:
           cache-from: type=gha,scope=tethon-hostd
           cache-to: type=gha,mode=max,scope=tethon-hostd
 
-  deploy:
-    name: Trigger Dokploy redeploys
+  deploy-hub:
+    name: Trigger hub redeploy
     runs-on: ubuntu-latest
-    needs: publish-images
-    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    needs: [go-checks, detect-changes, publish-hub-image]
+    if: ${{ always() && github.event_name != 'pull_request' && needs.go-checks.result == 'success' && needs.detect-changes.result == 'success' && (needs.detect-changes.outputs.hub_image_changed == 'true' || needs.detect-changes.outputs.hub_deploy_changed == 'true') && (needs.publish-hub-image.result == 'success' || needs.publish-hub-image.result == 'skipped') }}
     steps:
       - name: Trigger hub redeploy
         env:
@@ -132,6 +250,12 @@ jobs:
             --header "Content-Type: application/json" \
             --data "{\"composeId\":\"$DOKPLOY_HUB_COMPOSE_ID\",\"title\":\"GitHub Actions $short_sha\",\"description\":\"Redeploy tethon-hub after GHCR image publish.\"}"
 
+  deploy-hostd:
+    name: Trigger hostd redeploy
+    runs-on: ubuntu-latest
+    needs: [go-checks, detect-changes, publish-hostd-image]
+    if: ${{ always() && github.event_name != 'pull_request' && needs.go-checks.result == 'success' && needs.detect-changes.result == 'success' && (needs.detect-changes.outputs.hostd_image_changed == 'true' || needs.detect-changes.outputs.hostd_deploy_changed == 'true') && (needs.publish-hostd-image.result == 'success' || needs.publish-hostd-image.result == 'skipped') }}
+    steps:
       - name: Trigger hostd redeploy
         env:
           DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}

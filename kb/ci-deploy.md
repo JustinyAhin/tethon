@@ -14,11 +14,17 @@ GitHub Actions finishes publishing the new one.
 The workflow at `.github/workflows/control-images.yml` runs:
 
 ```txt
-go checks -> build and push images -> trigger Dokploy redeploy
+go checks + change detection -> service image build(s) -> service redeploy(s)
 ```
 
-Pull requests run only the Go checks. Deploys only run after green checks on
-`main`.
+Pull requests run Go checks and change detection only. Deploys only run after
+green checks on `main`.
+
+Pushes to `main` build and redeploy only the services affected by the changed
+paths. Hub-only changes publish and redeploy only the hub image; hostd-only
+changes publish and redeploy only the hostd image. Compose-only changes redeploy
+the matching service without rebuilding its image. Manual `workflow_dispatch`
+runs force both image builds and both redeploys.
 
 Images are pushed to GHCR with both moving `main` tags and immutable short SHA
 tags:
@@ -68,8 +74,9 @@ Keep Dokploy auto-deploy disabled for both Compose services; the old
 the internal `composeId`, and return `Automatic deployments are disabled for
 this compose` when auto-deploy is off.
 
-If the API key, base URL, or a compose ID is missing, that redeploy step is
-skipped. Image publishing still happens.
+If the API key, base URL, or a compose ID is missing, the matching redeploy step
+fails with a specific missing-config error after any required image publishing
+has completed.
 
 ## Self-Update Behavior
 
