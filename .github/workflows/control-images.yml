@@ -115,9 +115,12 @@ jobs:
           DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
           DOKPLOY_HUB_COMPOSE_ID: ${{ vars.DOKPLOY_HUB_COMPOSE_ID }}
         run: |
+          missing=0
           if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HUB_COMPOSE_ID" ]; then
-            echo "Dokploy hub API config is incomplete; skipping hub redeploy."
-            exit 0
+            [ -n "$DOKPLOY_API_KEY" ] || { echo "::error::DOKPLOY_API_KEY secret is missing."; missing=1; }
+            [ -n "$DOKPLOY_BASE_URL" ] || { echo "::error::DOKPLOY_BASE_URL repository variable is missing."; missing=1; }
+            [ -n "$DOKPLOY_HUB_COMPOSE_ID" ] || { echo "::error::DOKPLOY_HUB_COMPOSE_ID repository variable is missing."; missing=1; }
+            exit "$missing"
           fi
           base_url="${DOKPLOY_BASE_URL%/}"
           short_sha="${GITHUB_SHA::12}"
@@ -133,9 +136,12 @@ jobs:
           DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
           DOKPLOY_HOSTD_COMPOSE_ID: ${{ vars.DOKPLOY_HOSTD_COMPOSE_ID }}
         run: |
+          missing=0
           if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HOSTD_COMPOSE_ID" ]; then
-            echo "Dokploy hostd API config is incomplete; skipping hostd redeploy."
-            exit 0
+            [ -n "$DOKPLOY_API_KEY" ] || { echo "::error::DOKPLOY_API_KEY secret is missing."; missing=1; }
+            [ -n "$DOKPLOY_BASE_URL" ] || { echo "::error::DOKPLOY_BASE_URL repository variable is missing."; missing=1; }
+            [ -n "$DOKPLOY_HOSTD_COMPOSE_ID" ] || { echo "::error::DOKPLOY_HOSTD_COMPOSE_ID repository variable is missing."; missing=1; }
+            exit "$missing"
           fi
           base_url="${DOKPLOY_BASE_URL%/}"
           short_sha="${GITHUB_SHA::12}"
