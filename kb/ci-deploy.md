@@ -58,8 +58,8 @@ Set these repository variables:
 
 ```txt
 DOKPLOY_BASE_URL=https://dokploy.example.com
-DOKPLOY_HUB_COMPOSE_ID=GYXGPmjN1L5BgGAbGw5b4
-DOKPLOY_HOSTD_COMPOSE_ID=ma5twaFdUo_PN3jZMra16
+DOKPLOY_HUB_COMPOSE_ID=<hub composeId>
+DOKPLOY_HOSTD_COMPOSE_ID=<hostd composeId>
 ```
 
 The workflow calls `POST /api/compose.redeploy` with the matching `composeId`.
