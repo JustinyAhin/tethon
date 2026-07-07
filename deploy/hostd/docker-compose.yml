@@ -1,0 +1,27 @@
+services:
+  hostd:
+    build:
+      context: ../..
+      dockerfile: deploy/hostd/Dockerfile
+    restart: unless-stopped
+    environment:
+      TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?set CLAUDE_CODE_OAUTH_TOKEN in Dokploy (claude setup-token)}
+    command:
+      - -addr
+      - 127.0.0.1:39181
+      - -hub-url
+      - https://hub.tethon.dev
+      - -host-id
+      - vps-1
+      - -name
+      - VPS
+      - -db
+      - /var/lib/tethon/hostd.db
+      - -repo-root
+      - /var/lib/tethon/repos
+    volumes:
+      - hostd-data:/var/lib/tethon
+
+volumes:
+  hostd-data:
