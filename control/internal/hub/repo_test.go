@@ -51,9 +51,22 @@ func TestHubRelaysRepoRefsNotFound(t *testing.T) {
 	registerHost(t, hub.URL, protocol.RegisterHostRequest{HostID: "mac", URL: host.URL})
 	connectReverseHost(t, hub.URL, "mac", "", host.Config.Handler)
 
-	resp, err := http.Get(hub.URL + "/repos/mac/nope/refs")
-	if err != nil {
-		t.Fatal(err)
+	var resp *http.Response
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		var err error
+		resp, err = http.Get(hub.URL + "/repos/mac/nope/refs")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			break
+		}
+		resp.Body.Close()
+		time.Sleep(time.Millisecond)
+	}
+	if resp == nil {
+		t.Fatal("timed out waiting for repo refs response")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
