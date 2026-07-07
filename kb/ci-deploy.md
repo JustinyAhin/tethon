@@ -41,11 +41,14 @@ private unless there is a deliberate reason to allow anonymous pulls; configure
 Dokploy registry credentials with read access to these packages before switching
 the services to image-based deploys.
 
-The Dokploy compose files default to the moving `main` tags and set
-`pull_policy: always`, so Dokploy's standard `docker compose up` deploy command
-pulls the current registry image instead of reusing a stale local `main` image.
-To pin or roll back one service, set the matching Dokploy environment variable
-to a SHA tag and redeploy:
+The deploy jobs pin Dokploy's compose environment to the immutable short SHA tag
+that was just published, then call `compose.redeploy`. This avoids depending on
+the moving `main` tag or Docker's local tag cache. The compose files still
+default to `main` for first-time setup and keep `pull_policy: always` as a
+fallback, but normal CI deploys should leave Dokploy running a SHA-tagged image.
+
+To pin or roll back one service manually, set the matching Dokploy environment
+variable to a SHA tag and redeploy:
 
 ```txt
 TETHON_HUB_IMAGE=ghcr.io/justinyahin/tethon-hub:<short-sha>
@@ -93,17 +96,22 @@ Set these repository variables:
 DOKPLOY_BASE_URL=https://dokploy.example.com
 DOKPLOY_HUB_COMPOSE_ID=<hub composeId>
 DOKPLOY_HOSTD_COMPOSE_ID=<hostd composeId>
+DOKPLOY_HUB_ENVIRONMENT_ID=<hub environmentId>
+DOKPLOY_HOSTD_ENVIRONMENT_ID=<hostd environmentId>
 ```
 
-The workflow calls `POST /api/compose.redeploy` with the matching `composeId`.
+When an image is rebuilt, the workflow fetches the matching Dokploy environment,
+updates only `TETHON_HUB_IMAGE` or `TETHON_HOSTD_IMAGE` in the environment's
+`env` blob, and posts it back with `POST /api/environment.update`. It then calls
+`POST /api/compose.redeploy` with the matching `composeId`.
 Keep Dokploy auto-deploy disabled for both Compose services; the old
 `/api/deploy/compose/...` webhook URLs use each service's `refreshToken`, not
 the internal `composeId`, and return `Automatic deployments are disabled for
 this compose` when auto-deploy is off.
 
-If the API key, base URL, or a compose ID is missing, the matching redeploy step
-fails with a specific missing-config error after any required image publishing
-has completed.
+If the API key, base URL, compose ID, or environment ID is missing, the matching
+deploy step fails with a specific missing-config error after any required image
+publishing has completed.
 
 ## Self-Update Behavior
 

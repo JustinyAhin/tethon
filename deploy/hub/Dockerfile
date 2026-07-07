@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1
 
 FROM golang:1.26-bookworm AS build
+ARG VERSION=dev
 
 WORKDIR /src/control
 COPY control/go.mod control/go.sum ./
 RUN go mod download
 
 COPY control/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/tethon-hub ./cmd/tethon-hub
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/tethon-hub ./cmd/tethon-hub
 
 FROM alpine:3.22
 

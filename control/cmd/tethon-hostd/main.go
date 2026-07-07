@@ -36,6 +36,8 @@ const (
 	hubRetryMaxBackoff       = 30 * time.Second
 )
 
+var version = "dev"
+
 type repoRootsFlag []string
 
 func (f *repoRootsFlag) String() string {
@@ -116,6 +118,7 @@ func run() error {
 		return err
 	}
 	logger := slog.Default()
+	logger.Info("hostd_starting", "version", version)
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
 		return err

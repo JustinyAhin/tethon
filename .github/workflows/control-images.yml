@@ -177,6 +177,8 @@ jobs:
           context: .
           file: deploy/hub/Dockerfile
           platforms: ${{ env.PLATFORMS }}
+          build-args: |
+            VERSION=${{ env.SHORT_SHA }}
           push: true
           tags: |
             ${{ env.HUB_IMAGE }}:main
@@ -216,6 +218,8 @@ jobs:
           context: .
           file: deploy/hostd/Dockerfile
           platforms: ${{ env.PLATFORMS }}
+          build-args: |
+            VERSION=${{ env.SHORT_SHA }}
           push: true
           tags: |
             ${{ env.HOSTD_IMAGE }}:main
@@ -228,7 +232,35 @@ jobs:
     runs-on: ubuntu-latest
     needs: [go-checks, detect-changes, publish-hub-image]
     if: ${{ always() && github.event_name != 'pull_request' && needs.go-checks.result == 'success' && needs.detect-changes.result == 'success' && (needs.detect-changes.outputs.hub_image_changed == 'true' || needs.detect-changes.outputs.hub_deploy_changed == 'true') && (needs.publish-hub-image.result == 'success' || needs.publish-hub-image.result == 'skipped') }}
+    concurrency:
+      group: dokploy-control-deploy-${{ github.run_id }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Pin hub image in Dokploy environment
+        if: ${{ needs.detect-changes.outputs.hub_image_changed == 'true' }}
+        env:
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
+          DOKPLOY_HUB_ENVIRONMENT_ID: ${{ vars.DOKPLOY_HUB_ENVIRONMENT_ID }}
+        run: |
+          missing=0
+          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HUB_ENVIRONMENT_ID" ]; then
+            [ -n "$DOKPLOY_API_KEY" ] || { echo "::error::DOKPLOY_API_KEY secret is missing."; missing=1; }
+            [ -n "$DOKPLOY_BASE_URL" ] || { echo "::error::DOKPLOY_BASE_URL repository variable is missing."; missing=1; }
+            [ -n "$DOKPLOY_HUB_ENVIRONMENT_ID" ] || { echo "::error::DOKPLOY_HUB_ENVIRONMENT_ID repository variable is missing."; missing=1; }
+            exit "$missing"
+          fi
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          short_sha="${GITHUB_SHA::12}"
+          scripts/dokploy-set-env.sh \
+            "$DOKPLOY_BASE_URL" \
+            "$DOKPLOY_API_KEY" \
+            "$DOKPLOY_HUB_ENVIRONMENT_ID" \
+            TETHON_HUB_IMAGE \
+            "${REGISTRY}/${owner}/tethon-hub:${short_sha}"
+
       - name: Trigger hub redeploy
         env:
           DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
@@ -255,7 +287,35 @@ jobs:
     runs-on: ubuntu-latest
     needs: [go-checks, detect-changes, publish-hostd-image]
     if: ${{ always() && github.event_name != 'pull_request' && needs.go-checks.result == 'success' && needs.detect-changes.result == 'success' && (needs.detect-changes.outputs.hostd_image_changed == 'true' || needs.detect-changes.outputs.hostd_deploy_changed == 'true') && (needs.publish-hostd-image.result == 'success' || needs.publish-hostd-image.result == 'skipped') }}
+    concurrency:
+      group: dokploy-control-deploy-${{ github.run_id }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Pin hostd image in Dokploy environment
+        if: ${{ needs.detect-changes.outputs.hostd_image_changed == 'true' }}
+        env:
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
+          DOKPLOY_HOSTD_ENVIRONMENT_ID: ${{ vars.DOKPLOY_HOSTD_ENVIRONMENT_ID }}
+        run: |
+          missing=0
+          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HOSTD_ENVIRONMENT_ID" ]; then
+            [ -n "$DOKPLOY_API_KEY" ] || { echo "::error::DOKPLOY_API_KEY secret is missing."; missing=1; }
+            [ -n "$DOKPLOY_BASE_URL" ] || { echo "::error::DOKPLOY_BASE_URL repository variable is missing."; missing=1; }
+            [ -n "$DOKPLOY_HOSTD_ENVIRONMENT_ID" ] || { echo "::error::DOKPLOY_HOSTD_ENVIRONMENT_ID repository variable is missing."; missing=1; }
+            exit "$missing"
+          fi
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          short_sha="${GITHUB_SHA::12}"
+          scripts/dokploy-set-env.sh \
+            "$DOKPLOY_BASE_URL" \
+            "$DOKPLOY_API_KEY" \
+            "$DOKPLOY_HOSTD_ENVIRONMENT_ID" \
+            TETHON_HOSTD_IMAGE \
+            "${REGISTRY}/${owner}/tethon-hostd:${short_sha}"
+
       - name: Trigger hostd redeploy
         env:
           DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}

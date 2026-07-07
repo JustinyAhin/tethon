@@ -13,6 +13,8 @@ import (
 	"tethon/internal/hub"
 )
 
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -41,6 +43,7 @@ func run() error {
 	hubServer.SetDeviceStore(store)
 	hubServer.SetPushSender(hub.NewExpoPushSender(hub.ExpoPushConfig{AccessToken: *expoAccessToken}))
 	srv := &http.Server{Addr: *addr, Handler: hubServer.Handler()}
+	log.Printf("hub starting version=%s", version)
 	log.Printf("hub serving on http://%s with db %s", *addr, *dbPath)
 	return srv.ListenAndServe()
 }
