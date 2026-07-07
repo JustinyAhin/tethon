@@ -176,6 +176,15 @@ func claudePermissionMode(mode string) string {
 	return ClaudePermissionModeDefault
 }
 
+func claudeUsesTethonApprovals(mode string) bool {
+	switch claudePermissionMode(mode) {
+	case "auto", "bypassPermissions", "dontAsk":
+		return false
+	default:
+		return true
+	}
+}
+
 func NewClaude(config ClaudeConfig) Adapter {
 	binary := config.Binary
 	if binary == "" {
@@ -494,12 +503,15 @@ func (s *claudeSession) hookSettings(hook claudeHookDecision, hookLogPath string
 			},
 		},
 	}
+	hooks := map[string]any{
+		"PostToolUse":        hookConfig,
+		"PostToolUseFailure": hookConfig,
+	}
+	if hook.Mode != claudeHookModeDefer || claudeUsesTethonApprovals(s.permissionMode) {
+		hooks["PreToolUse"] = hookConfig
+	}
 	settings := map[string]any{
-		"hooks": map[string]any{
-			"PreToolUse":         hookConfig,
-			"PostToolUse":        hookConfig,
-			"PostToolUseFailure": hookConfig,
-		},
+		"hooks": hooks,
 	}
 	raw, err := json.Marshal(settings)
 	if err != nil {
@@ -766,7 +778,7 @@ func (s *claudeSession) handleClaudeEvent(ctx context.Context, event claudeStrea
 				return claudeTurnContinue, err
 			}
 		}
-		if approval, ok := event.approval(); ok {
+		if approval, ok := event.approval(claudeUsesTethonApprovals(s.permissionMode)); ok {
 			if err := s.createApproval(ctx, approval); err != nil {
 				return claudeTurnContinue, err
 			}
@@ -996,17 +1008,20 @@ func (e claudeStreamEvent) assistantText() []string {
 	return texts
 }
 
-func (e claudeStreamEvent) approval() (claudeApproval, bool) {
+func (e claudeStreamEvent) approval(includePermissionDenials bool) (claudeApproval, bool) {
 	if e.StopReason != "tool_deferred" && e.DeferredToolUse == nil && len(e.PermissionDenials) == 0 {
 		return claudeApproval{}, false
 	}
 	if e.DeferredToolUse != nil {
 		return approvalFromTool(*e.DeferredToolUse, e.RequestID), true
 	}
-	if len(e.PermissionDenials) > 0 {
+	if includePermissionDenials && len(e.PermissionDenials) > 0 {
 		return approvalFromTool(e.PermissionDenials[0], e.RequestID), true
 	}
-	return claudeApproval{RequestID: firstNonEmpty(e.RequestID, "claude_permission")}, true
+	if e.StopReason == "tool_deferred" {
+		return claudeApproval{RequestID: firstNonEmpty(e.RequestID, "claude_permission")}, true
+	}
+	return claudeApproval{}, false
 }
 
 func approvalFromTool(tool claudeToolRequest, fallbackID string) claudeApproval {

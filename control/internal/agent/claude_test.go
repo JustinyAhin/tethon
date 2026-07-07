@@ -131,6 +131,65 @@ func TestClaudeStartConfiguresPreToolUseDeferHook(t *testing.T) {
 	}
 }
 
+func TestClaudeAutoModeDoesNotInstallPreToolUseDeferHook(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n",
+	}}
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner, HookHelperBinary: "/tmp/tethon-hostd"})
+
+	_, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create: protocol.CreateSessionRequest{
+			Repo:           ".",
+			Agent:          "claude-cli",
+			Prompt:         "hi",
+			PermissionMode: "auto",
+		},
+	}, newMemorySink())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	specs := runner.specs()
+	assertArgsContain(t, specs[0].Args, "--permission-mode", "auto")
+	settings := argAfter(t, specs[0].Args, "--settings")
+	if strings.Contains(settings, `"PreToolUse"`) {
+		t.Fatalf("auto settings included PreToolUse defer hook: %s", settings)
+	}
+	if !strings.Contains(settings, `"PostToolUse"`) || !strings.Contains(settings, `"PostToolUseFailure"`) {
+		t.Fatalf("auto settings should keep post-tool logging hooks: %s", settings)
+	}
+}
+
+func TestClaudeAutoModePermissionDenialDoesNotCreateApproval(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: []string{
+		`{"type":"result","is_error":false,"session_id":"claude_1","permission_denials":[{"tool_use_id":"tool_1","tool_name":"Bash","command":"rm -rf /tmp/build"}]}` + "\n",
+	}}
+	sink := newMemorySink()
+	adapter := NewClaude(ClaudeConfig{Binary: "claude", Runner: runner})
+
+	running, err := adapter.Start(context.Background(), StartRequest{
+		Session: protocol.Session{ID: "ses_1", Repo: "."},
+		Create: protocol.CreateSessionRequest{
+			Repo:           ".",
+			Agent:          "claude-cli",
+			Prompt:         "clean",
+			PermissionMode: "auto",
+		},
+	}, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink.waitForInactive(t, running)
+
+	if event, ok := sink.eventOfType(protocol.EventAwaitingApproval); ok {
+		t.Fatalf("unexpected approval event in auto mode: %+v", event)
+	}
+	if sink.status() == "awaiting_approval" {
+		t.Fatalf("status = %q, want non-approval status", sink.status())
+	}
+}
+
 func TestClaudeStartPassesExtraEnvToCommand(t *testing.T) {
 	runner := &fakeCommandRunner{outputs: []string{
 		`{"type":"result","is_error":false,"session_id":"claude_1"}` + "\n",
