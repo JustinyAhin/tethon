@@ -41,9 +41,11 @@ private unless there is a deliberate reason to allow anonymous pulls; configure
 Dokploy registry credentials with read access to these packages before switching
 the services to image-based deploys.
 
-The Dokploy compose files default to the moving `main` tags. To pin or roll
-back one service, set the matching Dokploy environment variable to a SHA tag and
-redeploy:
+The Dokploy compose files default to the moving `main` tags and set
+`pull_policy: always`, so Dokploy's standard `docker compose up` deploy command
+pulls the current registry image instead of reusing a stale local `main` image.
+To pin or roll back one service, set the matching Dokploy environment variable
+to a SHA tag and redeploy:
 
 ```txt
 TETHON_HUB_IMAGE=ghcr.io/justinyahin/tethon-hub:<short-sha>

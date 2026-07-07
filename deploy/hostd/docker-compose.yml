@@ -1,6 +1,7 @@
 services:
   hostd:
     image: ${TETHON_HOSTD_IMAGE:-ghcr.io/justinyahin/tethon-hostd:main}
+    pull_policy: always
     restart: unless-stopped
     environment:
       TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
