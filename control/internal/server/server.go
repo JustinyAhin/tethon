@@ -35,6 +35,7 @@ type ApprovalNotification struct {
 }
 
 type ApprovalNotifier func(context.Context, ApprovalNotification) error
+type RepoRefresher func(context.Context, repo.Repo) error
 
 type Server struct {
 	store            *sessionlog.Store
@@ -42,6 +43,7 @@ type Server struct {
 	agents           *agent.Registry
 	repos            *repo.Registry
 	worktrees        *worktree.Manager
+	repoRefresher    RepoRefresher
 	repoRoots        []string
 	resources        resource.Collector
 	resourceTimeout  time.Duration
@@ -56,6 +58,7 @@ type Config struct {
 	Repos             *repo.Registry
 	Worktrees         *worktree.Manager
 	RepoRoots         []string
+	RepoRefresher     RepoRefresher
 	ResourceCollector resource.Collector
 	ResourceTimeout   time.Duration
 	ApprovalNotifier  ApprovalNotifier
@@ -107,6 +110,7 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 		agents:           agents,
 		repos:            config.Repos,
 		worktrees:        config.Worktrees,
+		repoRefresher:    config.RepoRefresher,
 		repoRoots:        repoRoots,
 		resources:        resources,
 		resourceTimeout:  resourceTimeout,
@@ -293,6 +297,13 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	workDir := joinCWD(resolved.repoPath, resolved.cwd)
 	if s.worktrees != nil && resolved.repoID != "" {
+		if err := s.refreshRepo(r.Context(), resolved.repoID); err != nil {
+			_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
+			_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
+			s.logger.Error("session_repo_refresh_failed", "session_id", session.ID, "repo_id", resolved.repoID, "error", err.Error())
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		wt, err := s.worktrees.Create(r.Context(), worktree.CreateOptions{
 			ID:       session.ID,
 			RepoID:   resolved.repoID,
@@ -612,6 +623,21 @@ func (s *Server) removeSessionWorktree(ctx context.Context, session protocol.Ses
 	if err := s.worktrees.Remove(ctx, session.ID); err != nil && !errors.Is(err, worktree.ErrNotFound) {
 		return err
 	}
+	return nil
+}
+
+func (s *Server) refreshRepo(ctx context.Context, repoID string) error {
+	if s.repoRefresher == nil || s.repos == nil {
+		return nil
+	}
+	rp, ok := s.repos.Get(repoID)
+	if !ok {
+		return fmt.Errorf("repo %q is not registered for refresh", repoID)
+	}
+	if err := s.repoRefresher(ctx, rp); err != nil {
+		return fmt.Errorf("refresh repo %q: %w", repoID, err)
+	}
+	s.logger.Info("session_repo_refreshed", "repo_id", repoID, "repo", rp.Path)
 	return nil
 }
 

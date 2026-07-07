@@ -75,6 +75,7 @@ func run() error {
 	hostID := flag.String("host-id", sanitizeHostID(hostname), "host id")
 	name := flag.String("name", hostname, "host display name")
 	allowAnthropicAPIKey := flag.Bool("allow-anthropic-api-key", false, "allow claude-cli sessions while ANTHROPIC_API_KEY is set")
+	refreshReposOnSession := flag.Bool("refresh-repos-on-session", false, "fetch and fast-forward registered repos before creating session worktrees")
 	worktreeRoot := flag.String("worktree-root", "", "directory for per-session worktrees (default: <db dir>/worktrees)")
 	cacheRoot := flag.String("cache-root", "", "shared build/dependency cache root for agents (default: <db dir>/cache)")
 	var repoRoots repoRootsFlag
@@ -150,11 +151,16 @@ func run() error {
 		hubURL:        *hubURL,
 		repos:         registerReq.Repos,
 	})
+	var repoRefresher server.RepoRefresher
+	if *refreshReposOnSession {
+		repoRefresher = repo.Refresh
+	}
 	hostServer := server.NewWithConfig(store, server.Config{
-		Agents:    agentRegistry,
-		Repos:     registry,
-		Worktrees: worktrees,
-		RepoRoots: registry.Paths(),
+		Agents:        agentRegistry,
+		Repos:         registry,
+		Worktrees:     worktrees,
+		RepoRoots:     registry.Paths(),
+		RepoRefresher: repoRefresher,
 		ApprovalNotifier: func(ctx context.Context, n server.ApprovalNotification) error {
 			return hub.notifyApproval(ctx, *hostID, protocol.PushApprovalTestRequest{
 				HostID:    *hostID,

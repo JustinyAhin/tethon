@@ -36,10 +36,11 @@ RUN groupadd --gid 10001 tethon \
 	&& chown -R tethon:tethon /var/lib/tethon
 
 COPY --from=build /out/tethon-hostd /usr/local/bin/tethon-hostd
+COPY --chmod=0755 deploy/hostd/entrypoint.sh /usr/local/bin/tethon-hostd-entrypoint
 
 USER tethon:tethon
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 	CMD curl -fsS http://127.0.0.1:39181/healthz >/dev/null || exit 1
 
-ENTRYPOINT ["/usr/local/bin/tethon-hostd"]
+ENTRYPOINT ["/usr/local/bin/tethon-hostd-entrypoint"]

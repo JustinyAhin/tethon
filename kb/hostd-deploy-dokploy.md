@@ -7,6 +7,17 @@ The compose file defaults to the `ghcr.io/justinyahin/tethon-hostd:main` image
 published by CI. See `kb/ci-deploy.md` for Dokploy API setup, rollback, and
 self-update behavior.
 
+On container startup, the hostd image refreshes git repositories under
+`/var/lib/tethon/repos` before starting the daemon. The default Dokploy compose
+sets `TETHON_HOSTD_REFRESH_REPOS=strict`, so startup fails if a repo cannot
+fetch or fast-forward cleanly instead of serving stale code. Set
+`TETHON_HOSTD_REFRESH_REPOS=0` only for emergency startup when repo sync is
+known to be broken and stale repos are acceptable.
+
+The VPS compose also starts hostd with `-refresh-repos-on-session`, so a mobile,
+web, or CLI session refreshes the selected repo again immediately before its
+per-session worktree is created.
+
 GitHub container packages are private by default. Configure Dokploy registry
 credentials with read access to `ghcr.io/justinyahin/tethon-hostd` unless you
 intentionally make the package public.
@@ -76,6 +87,18 @@ volume-backed home directory so later fetch/push operations can reuse it.
 Local SSH setup on the Mac or VPS host does not apply inside this container.
 Using SSH later would require adding an SSH client and provisioning a deploy key
 or mounted key material into the hostd volume.
+
+After the repo is initialized, subsequent hostd container starts run:
+
+```bash
+git fetch --prune --tags origin
+git switch <origin default branch>
+git merge --ff-only origin/<origin default branch>
+```
+
+Repos with local changes or non-fast-forward updates are rejected in strict mode.
+Agent sessions should make changes in per-session worktrees, not in the base
+repo under `/var/lib/tethon/repos`.
 
 ## Verify
 

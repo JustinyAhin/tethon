@@ -5,6 +5,8 @@ services:
     environment:
       TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?set CLAUDE_CODE_OAUTH_TOKEN in Dokploy (claude setup-token)}
+      TETHON_HOSTD_REFRESH_REPOS: ${TETHON_HOSTD_REFRESH_REPOS:-strict}
+      TETHON_HOSTD_REPO_ROOTS: /var/lib/tethon/repos
     command:
       - -addr
       - 127.0.0.1:39181
@@ -18,6 +20,7 @@ services:
       - /var/lib/tethon/hostd.db
       - -repo-root
       - /var/lib/tethon/repos
+      - -refresh-repos-on-session
     volumes:
       - hostd-data:/var/lib/tethon
 

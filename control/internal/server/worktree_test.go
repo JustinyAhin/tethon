@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -286,6 +288,97 @@ func TestCreateSessionRunsAgentInIsolatedWorktree(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 			t.Fatalf("expected a git worktree at %q: %v", dir, err)
 		}
+	}
+}
+
+func TestCreateSessionRefreshesRepoBeforeWorktree(t *testing.T) {
+	repoPath := gitRepo(t)
+	repos, err := repo.Discover(context.Background(), []string{repoPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := repo.NewRegistry(repos...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := worktree.NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	runner := &serverFakeCommandRunner{output: `{"type":"system","subtype":"init","session_id":"c1"}` + "\n" +
+		`{"type":"result","is_error":false,"session_id":"c1"}` + "\n"}
+	refreshed := false
+	ts := newTestServerWithConfig(t, Config{
+		Agents: agent.NewRegistry(agent.NewClaude(agent.ClaudeConfig{
+			Binary: "claude",
+			Runner: runner,
+		})),
+		Repos:     registry,
+		Worktrees: mgr,
+		RepoRefresher: func(_ context.Context, rp repo.Repo) error {
+			refreshed = true
+			if rp.Path != repos[0].Path {
+				return fmt.Errorf("refresher repo path = %q, want %q", rp.Path, repos[0].Path)
+			}
+			if err := os.WriteFile(filepath.Join(rp.Path, "refreshed.txt"), []byte("ok\n"), 0o644); err != nil {
+				return err
+			}
+			for _, args := range [][]string{
+				{"add", "refreshed.txt"},
+				{"commit", "-m", "refresh"},
+			} {
+				cmd := exec.Command("git", append([]string{"-C", rp.Path}, args...)...)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					return fmt.Errorf("git %v: %w\n%s", args, err, out)
+				}
+			}
+			return nil
+		},
+	})
+
+	var resp protocol.CreateSessionResponse
+	postJSONInto(t, ts.URL+"/sessions", protocol.CreateSessionRequest{
+		RepoID: repos[0].ID,
+		Agent:  "claude-cli",
+		Prompt: "hi",
+	}, &resp)
+	if !refreshed {
+		t.Fatal("expected repo refresher to run")
+	}
+	if len(runner.specs) != 1 {
+		t.Fatalf("expected 1 agent run, got %d", len(runner.specs))
+	}
+	if _, err := os.Stat(filepath.Join(runner.specs[0].Dir, "refreshed.txt")); err != nil {
+		t.Fatalf("worktree missing refreshed file: %v", err)
+	}
+}
+
+func TestCreateSessionRepoRefreshFailureDoesNotStartAgent(t *testing.T) {
+	registry, repos := fixtureRepo(t)
+	mgr := worktree.NewManager(filepath.Join(t.TempDir(), "worktrees"))
+	runner := claudeRunnerResult(false)
+	ts := newTestServerWithConfig(t, Config{
+		Agents: agent.NewRegistry(agent.NewClaude(agent.ClaudeConfig{
+			Binary: "claude",
+			Runner: runner,
+		})),
+		Repos:     registry,
+		Worktrees: mgr,
+		RepoRefresher: func(context.Context, repo.Repo) error {
+			return errors.New("dirty repo")
+		},
+	})
+
+	status := postJSONStatus(t, ts.URL+"/sessions", protocol.CreateSessionRequest{
+		RepoID: repos[0].ID,
+		Agent:  "claude-cli",
+		Prompt: "hi",
+	})
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for refresh failure, got %d", status)
+	}
+	if len(runner.specs) != 0 {
+		t.Fatalf("agent started after refresh failure: %#v", runner.specs)
+	}
+	if got := len(mgr.List()); got != 0 {
+		t.Fatalf("worktrees = %d, want 0", got)
 	}
 }
 

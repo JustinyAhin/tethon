@@ -230,6 +230,73 @@ func ListRefs(ctx context.Context, repo Repo) (branches, tags []string, err erro
 	return pinFirst(splitLines(branchOut), repo.DefaultBranch), splitLines(tagOut), nil
 }
 
+// Refresh fetches a repo's origin and fast-forwards the default branch. It never
+// resets, cleans, or overwrites local changes; dirty or divergent repos return
+// an error so callers can avoid starting sessions on stale or ambiguous code.
+func Refresh(ctx context.Context, repo Repo) error {
+	if repo.Path == "" {
+		return errors.New("repo path is required")
+	}
+	if _, err := gitOutput(ctx, repo.Path, "remote", "get-url", "origin"); err != nil {
+		return nil
+	}
+	if err := runGit(ctx, repo.Path, "fetch", "--prune", "--tags", "origin"); err != nil {
+		return fmt.Errorf("fetch origin: %w", err)
+	}
+	branch := defaultBranch(ctx, repo)
+	current, _ := gitOutput(ctx, repo.Path, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if current != branch {
+		if err := requireClean(ctx, repo.Path); err != nil {
+			return fmt.Errorf("switch to %s: %w", branch, err)
+		}
+		if branchExists(ctx, repo.Path, branch) {
+			if err := runGit(ctx, repo.Path, "switch", branch); err != nil {
+				return fmt.Errorf("switch to %s: %w", branch, err)
+			}
+		} else if err := runGit(ctx, repo.Path, "switch", "--track", "-c", branch, "origin/"+branch); err != nil {
+			return fmt.Errorf("switch to %s: %w", branch, err)
+		}
+	}
+	if err := requireClean(ctx, repo.Path); err != nil {
+		return fmt.Errorf("fast-forward %s: %w", branch, err)
+	}
+	if err := runGit(ctx, repo.Path, "merge", "--ff-only", "origin/"+branch); err != nil {
+		return fmt.Errorf("fast-forward %s from origin/%s: %w", branch, branch, err)
+	}
+	return nil
+}
+
+func defaultBranch(ctx context.Context, repo Repo) string {
+	branch, _ := gitOutput(ctx, repo.Path, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	branch = strings.TrimPrefix(branch, "origin/")
+	if branch != "" {
+		return branch
+	}
+	if repo.DefaultBranch != "" {
+		return repo.DefaultBranch
+	}
+	branch, _ = gitOutput(ctx, repo.Path, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if branch != "" {
+		return branch
+	}
+	return "main"
+}
+
+func requireClean(ctx context.Context, dir string) error {
+	status, err := gitOutput(ctx, dir, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if status != "" {
+		return errors.New("repo has local changes")
+	}
+	return nil
+}
+
+func branchExists(ctx context.Context, dir, branch string) bool {
+	return runGit(ctx, dir, "show-ref", "--verify", "--quiet", "refs/heads/"+branch) == nil
+}
+
 func splitLines(s string) []string {
 	out := []string{}
 	for _, line := range strings.Split(s, "\n") {
@@ -275,6 +342,11 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, error) 
 		return "", err
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+func runGit(ctx context.Context, dir string, args ...string) error {
+	_, err := gitOutput(ctx, dir, args...)
+	return err
 }
 
 var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
