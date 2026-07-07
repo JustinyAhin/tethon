@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -48,6 +49,7 @@ const permissionModes: SelectOption[] = [
 
 export default function NewSession() {
   const router = useRouter();
+  const headerHeight = useHeaderHeight();
   const { invalidate, status } = useAuth();
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   const [hostsLoading, setHostsLoading] = useState(true);
@@ -305,6 +307,7 @@ export default function NewSession() {
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={headerHeight}
         style={styles.keyboard}
       >
         {hostsLoading ? (
@@ -322,6 +325,7 @@ export default function NewSession() {
         ) : (
           <ScrollView
             contentContainerStyle={styles.content}
+            keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
           >
             <SelectField

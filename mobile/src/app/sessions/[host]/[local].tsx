@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SessionInputBar } from '@/components/session-input-bar';
@@ -107,6 +108,7 @@ const SessionDetailContent = ({
   session: SessionSummary;
 }) => {
   const router = useRouter();
+  const headerHeight = useHeaderHeight();
   const { invalidate } = useAuth();
   const [busyAction, setBusyAction] = useState<'stop' | 'delete' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -356,6 +358,7 @@ const SessionDetailContent = ({
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         behavior={Platform.select({ ios: 'padding', default: undefined })}
+        keyboardVerticalOffset={headerHeight}
         style={styles.container}
       >
         <FlatList
@@ -363,6 +366,8 @@ const SessionDetailContent = ({
           contentContainerStyle={styles.listContent}
           data={events}
           initialNumToRender={18}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
           keyExtractor={(event) => String(event.seq)}
           ListEmptyComponent={
             <Text style={styles.emptyStreamText}>Waiting for events...</Text>
