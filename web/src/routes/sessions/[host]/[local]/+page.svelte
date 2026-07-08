@@ -405,7 +405,9 @@
 			>
 				Copy debug JSON
 			</button>
-			<button class="text-blue-600 hover:underline" onclick={reconnect}> Reconnect </button>
+			{#if !done}
+				<button class="text-blue-600 hover:underline" onclick={reconnect}> Reconnect </button>
+			{/if}
 			{#if !done && !streamError}
 				<button
 					onclick={cancel}

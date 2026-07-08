@@ -243,13 +243,13 @@ jobs:
         env:
           DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
           DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
-          DOKPLOY_HUB_ENVIRONMENT_ID: ${{ vars.DOKPLOY_HUB_ENVIRONMENT_ID }}
+          DOKPLOY_HUB_COMPOSE_ID: ${{ vars.DOKPLOY_HUB_COMPOSE_ID }}
         run: |
           missing=0
-          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HUB_ENVIRONMENT_ID" ]; then
+          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HUB_COMPOSE_ID" ]; then
             [ -n "$DOKPLOY_API_KEY" ] || { echo "::error::DOKPLOY_API_KEY secret is missing."; missing=1; }
             [ -n "$DOKPLOY_BASE_URL" ] || { echo "::error::DOKPLOY_BASE_URL repository variable is missing."; missing=1; }
-            [ -n "$DOKPLOY_HUB_ENVIRONMENT_ID" ] || { echo "::error::DOKPLOY_HUB_ENVIRONMENT_ID repository variable is missing."; missing=1; }
+            [ -n "$DOKPLOY_HUB_COMPOSE_ID" ] || { echo "::error::DOKPLOY_HUB_COMPOSE_ID repository variable is missing."; missing=1; }
             exit "$missing"
           fi
           owner="${GITHUB_REPOSITORY_OWNER,,}"
@@ -257,7 +257,7 @@ jobs:
           scripts/dokploy-set-env.sh \
             "$DOKPLOY_BASE_URL" \
             "$DOKPLOY_API_KEY" \
-            "$DOKPLOY_HUB_ENVIRONMENT_ID" \
+            "$DOKPLOY_HUB_COMPOSE_ID" \
             TETHON_HUB_IMAGE \
             "${REGISTRY}/${owner}/tethon-hub:${short_sha}"
 
@@ -298,13 +298,13 @@ jobs:
         env:
           DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
           DOKPLOY_BASE_URL: ${{ vars.DOKPLOY_BASE_URL }}
-          DOKPLOY_HOSTD_ENVIRONMENT_ID: ${{ vars.DOKPLOY_HOSTD_ENVIRONMENT_ID }}
+          DOKPLOY_HOSTD_COMPOSE_ID: ${{ vars.DOKPLOY_HOSTD_COMPOSE_ID }}
         run: |
           missing=0
-          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HOSTD_ENVIRONMENT_ID" ]; then
+          if [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_BASE_URL" ] || [ -z "$DOKPLOY_HOSTD_COMPOSE_ID" ]; then
             [ -n "$DOKPLOY_API_KEY" ] || { echo "::error::DOKPLOY_API_KEY secret is missing."; missing=1; }
             [ -n "$DOKPLOY_BASE_URL" ] || { echo "::error::DOKPLOY_BASE_URL repository variable is missing."; missing=1; }
-            [ -n "$DOKPLOY_HOSTD_ENVIRONMENT_ID" ] || { echo "::error::DOKPLOY_HOSTD_ENVIRONMENT_ID repository variable is missing."; missing=1; }
+            [ -n "$DOKPLOY_HOSTD_COMPOSE_ID" ] || { echo "::error::DOKPLOY_HOSTD_COMPOSE_ID repository variable is missing."; missing=1; }
             exit "$missing"
           fi
           owner="${GITHUB_REPOSITORY_OWNER,,}"
@@ -312,7 +312,7 @@ jobs:
           scripts/dokploy-set-env.sh \
             "$DOKPLOY_BASE_URL" \
             "$DOKPLOY_API_KEY" \
-            "$DOKPLOY_HOSTD_ENVIRONMENT_ID" \
+            "$DOKPLOY_HOSTD_COMPOSE_ID" \
             TETHON_HOSTD_IMAGE \
             "${REGISTRY}/${owner}/tethon-hostd:${short_sha}"
 

@@ -96,22 +96,20 @@ Set these repository variables:
 DOKPLOY_BASE_URL=https://dokploy.example.com
 DOKPLOY_HUB_COMPOSE_ID=<hub composeId>
 DOKPLOY_HOSTD_COMPOSE_ID=<hostd composeId>
-DOKPLOY_HUB_ENVIRONMENT_ID=<hub environmentId>
-DOKPLOY_HOSTD_ENVIRONMENT_ID=<hostd environmentId>
 ```
 
-When an image is rebuilt, the workflow fetches the matching Dokploy environment,
-updates only `TETHON_HUB_IMAGE` or `TETHON_HOSTD_IMAGE` in the environment's
-`env` blob, and posts it back with `POST /api/environment.update`. It then calls
-`POST /api/compose.redeploy` with the matching `composeId`.
+When an image is rebuilt, the workflow fetches the matching Dokploy compose
+service, updates only `TETHON_HUB_IMAGE` or `TETHON_HOSTD_IMAGE` in that
+service's `env` blob, and posts it back with `POST /api/compose.update`. It then
+calls `POST /api/compose.redeploy` with the matching `composeId`.
 Keep Dokploy auto-deploy disabled for both Compose services; the old
 `/api/deploy/compose/...` webhook URLs use each service's `refreshToken`, not
 the internal `composeId`, and return `Automatic deployments are disabled for
 this compose` when auto-deploy is off.
 
-If the API key, base URL, compose ID, or environment ID is missing, the matching
-deploy step fails with a specific missing-config error after any required image
-publishing has completed.
+If the API key, base URL, or compose ID is missing, the matching deploy step
+fails with a specific missing-config error after any required image publishing
+has completed.
 
 ## Self-Update Behavior
 
