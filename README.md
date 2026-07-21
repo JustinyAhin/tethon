@@ -1,20 +1,40 @@
-# tethon
+# Tethon
 
-Run coding agents (Claude Code, Codex, etc.) intensively, from anywhere — without being at the Mac. Spin up agents on demand across repos and host machines, and drive them from your phone with first-class ergonomics. A web companion acts as a secondary screen.
+Run coding agents on your own machines from a phone or browser. Tethon starts isolated sessions across registered repositories, streams structured agent events, and lets you send input or resolve tool approvals without staying at the host machine.
 
-It's not a remote desktop. It's a purpose-built **agent control** experience: structured UI for the common case, raw terminal as an escape hatch, and push-notification approvals that work from the lock screen.
+Tethon is not a remote desktop. It is an agent control plane with an adapter boundary for different coding agents. The clients understand sessions, tool calls, approvals, usage, and reconnectable event streams. Claude Code is the first working adapter. Codex is next on the adapter roadmap.
+
+## Current state
+
+Tethon is an early, self-hosted project that I currently use for remote Claude Code sessions. The control-plane protocol and host architecture are designed for multiple agent adapters, with Codex planned next. The Go control plane, web companion, and Expo mobile client are runnable. The mobile client can connect to a hub, list and start sessions, stream and persist events, send follow-up input, stop or delete sessions, resolve approvals, and act on approval push notifications.
+
+The project is under active development. Read [known limitations](kb/known-limitations.md) before exposing a deployment outside a private network.
+
+## Quick start
+
+The current happy path uses the Claude Code adapter with a deployed hub, a macOS host daemon, and either the web or mobile client. Start with [First remote agent session](kb/first-remote-agent-session.md). It covers the required token, hub checks, host installation, client setup, and a first isolated session.
+
+For local development:
+
+```sh
+bun install
+
+cd control && go test ./...
+cd ../web && bun run check && bun run lint
+cd ../mobile && bun run lint
+```
 
 ## Architecture
 
-Three tiers: thin **clients**, an always-on **hub** that is the single auth + routing surface, and one **host daemon** per machine that owns all session state and runs the agents. Host daemons dial out to the hub to register; clients only ever talk to the hub.
+Three tiers: thin **clients**, an always-on **hub** that is the single authentication and routing surface, and one **host daemon** per machine that owns session state and runs the agent. Host daemons dial out and keep a WebSocket open to the hub. Clients only talk to the hub.
 
 ### System topology
 
 ```mermaid
 flowchart LR
     subgraph clients["Clients (thin)"]
-        mobile["Mobile — Expo / React Native<br/><i>scaffold only</i><br/>approval cards · diff viewer · stream"]
-        web["Web companion — SvelteKit<br/>on Cloudflare Workers<br/>dashboard · structured session UI"]
+        mobile["Mobile · Expo / React Native<br/>sessions · stream · approvals · push"]
+        web["Web companion · SvelteKit<br/>on Cloudflare Workers<br/>dashboard · structured session UI"]
     end
 
     subgraph hubvps["Hub — small always-on VPS"]
@@ -23,8 +43,8 @@ flowchart LR
 
     subgraph machines["Host machines (Mac / VPS / …)"]
         direction TB
-        hostmac["tethon-hostd (Mac)"]
-        hostvps["tethon-hostd (VPS)"]
+        hostmac["tethon-hostd · Mac"]
+        hostvps["tethon-hostd · VPS"]
     end
 
     cli["tethon CLI<br/>hosts · session"]
@@ -33,10 +53,10 @@ flowchart LR
     web -->|"server-side hub-client<br/>(generated OpenAPI SDK)"| hub
     cli -->|HTTPS| hub
 
-    hostmac -.->|"register + heartbeat (outbound)"| hub
-    hostvps -.->|"register + heartbeat (outbound)"| hub
-    hub -->|"proxy session ops to registered host URL<br/><i>(hub must currently reach hostd directly)</i>"| hostmac
-    hub -->|proxy session ops| hostvps
+    hostmac -.->|"register + heartbeat + reverse WebSocket"| hub
+    hostvps -.->|"register + heartbeat + reverse WebSocket"| hub
+    hub -->|"session operations over host connection"| hostmac
+    hub -->|"session operations over host connection"| hostvps
 ```
 
 ### Host daemon internals
@@ -56,7 +76,8 @@ flowchart TB
         wt["Worktree manager<br/>internal/worktree<br/>git worktree pool<br/>shared object store + caches"]
 
         subgraph adapters["Agent adapters — internal/agent"]
-            claude["claude-cli adapter<br/>spawns Claude Code"]
+            claude["claude-cli adapter<br/>implemented"]
+            codex["Codex adapter<br/>planned next"]
             fake["fake adapter (tests)"]
         end
 
@@ -88,9 +109,10 @@ sequenceDiagram
     participant Hostd as Host daemon
     participant Agent as Claude Code
 
+    Hostd->>Hub: register and open reverse WebSocket
     User->>Client: start session (repo, base_ref, agent, prompt)
     Client->>Hub: POST /sessions
-    Hub->>Hostd: proxy create to registered host
+    Hub->>Hostd: proxy create over reverse WebSocket
     Hostd->>Hostd: create git worktree + persist session
     Hostd->>Agent: spawn claude-cli in worktree
     Hostd-->>Hub: append session_started (seq 1)
@@ -104,7 +126,7 @@ sequenceDiagram
     Note over Agent,Hostd: agent wants a risky tool call
     Agent->>Hostd: PreToolUse hook (tool_use_id)
     Hostd-->>Client: awaiting_approval (request_id, command, tool_input)
-    Hub->>User: (planned) push: Approve / Deny / Reply
+    Hub->>User: push: Approve / Deny / Reply
 
     User->>Client: Approve / Deny / Reply
     Client->>Hub: POST /sessions/:id/approvals/{request_id}
@@ -117,44 +139,55 @@ sequenceDiagram
 
 ### Components
 
-- **Host daemon** (`tethon-hostd`, Go) — one per machine; owns session state, manages a git worktree pool, supervises agents, emits structured events, and registers/heartbeats with the hub. The SQLite log is the source of truth; an in-memory broker is only live fan-out to attached clients.
-- **Hub** (`tethon-hub`, Go) — always-on coordinator on a small VPS; in-memory host registry + routing + SSE relay, with a Huma/OpenAPI client-facing API behind bearer-token auth. Single auth surface for all clients.
-- **Web companion** (SvelteKit on Cloudflare Workers) — dashboard and structured session UI. A server-side hub client (generated from the hub's OpenAPI schema) talks to the hub; raw terminal is still planned.
-- **Mobile client** (Expo / React Native) — the primary surface target: approval cards, diff viewer, agent stream. The current app is only scaffolded.
-- **CLI** (`tethon`) — `hosts` and `session` subcommands; drives the hub directly. `tethon-openapi` emits the hub OpenAPI schema that the web/mobile SDKs are generated from.
+- **Host daemon** (`tethon-hostd`, Go): one per machine. It owns session state, manages a git worktree pool, supervises agent processes through adapters, emits structured events, and keeps an outbound connection to the hub. The SQLite log is the source of truth; an in-memory broker handles live fan-out to attached clients. Claude Code is implemented now, with Codex planned next.
+- **Hub** (`tethon-hub`, Go): an always-on coordinator with a Huma/OpenAPI API, bearer-token authentication, host routing, SSE relay, and mobile push delivery. Host registrations are in memory; mobile device registrations are stored in SQLite.
+- **Web companion** (SvelteKit on Cloudflare Workers): a dashboard and structured session UI. A server-side client generated from the hub OpenAPI schema talks to the hub.
+- **Mobile client** (Expo / React Native): connects with credentials stored in SecureStore; lists and starts sessions; persists and resumes event streams; sends input; resolves approvals; and handles approval push notifications.
+- **CLI** (`tethon`): `hosts` and `session` subcommands that drive the hub directly. `tethon-openapi` emits the schema used to generate the web and mobile SDK.
 
-> **Routing caveat:** host daemons register and heartbeat *outbound*, but the hub still calls each registered host daemon URL to proxy session operations. Until host-initiated persistent connections land, the hub machine must be able to reach every `tethon-hostd` URL. See [`kb/known-limitations.md`](kb/known-limitations.md).
+The host daemon's HTTP listener is for local diagnostics. Session operations travel through the outbound WebSocket, so the hub does not need inbound network access to the host machine.
 
 ## Status
 
-Early but runnable through the hub, host daemon, CLI, and web companion.
+Early but runnable through the hub, host daemon, CLI, web companion, and mobile client.
 
 Implemented now:
 
 - Go hub, host daemon, and CLI under `control/`
 - SQLite-backed append-only session/event log with cursor replay
 - host registration, heartbeat, host/session relay, and bearer-token auth
+- host-initiated reverse WebSocket for session operations
 - hub `/healthz`, hostd `/healthz` and `/status`, plus a macOS hostd doctor
 - `claude-cli` adapter using the local Claude Code CLI and subscription auth
 - per-session git worktrees with cleanup guardrails and shared build/dependency caches
 - SvelteKit web UI for hosts, session creation, session list/detail, structured stream, input, approvals, and basic usage display
+- Expo mobile client for connection setup, host and session views, session creation, persisted event streams, input, lifecycle actions, and approvals
+- Expo push registration and approve, deny, or reply actions from notifications
 - macOS LaunchAgent install/run script for `tethon-hostd`
 - Dokploy/Compose hub deployment path
 
 Not implemented yet:
 
-- host-initiated persistent session tunnel; the hub still reaches the registered host daemon URL directly
-- mobile workflow beyond the Expo scaffold
-- push approvals
+- Codex and additional agent adapters
 - raw PTY/xterm escape hatch
 - persistent hub registry
 - `caffeinate` while sessions are active
+
+## Security model
+
+Tethon can start coding agents and approve tool calls on registered machines. Treat the hub token as a powerful credential.
+
+- Keep tokens in environment secrets or the mobile secure store. Do not commit them.
+- Put the hub behind HTTPS.
+- Bind the host daemon diagnostics listener to a local or private interface.
+- Use the outbound host connection instead of exposing the host daemon publicly.
+- Review the current [limitations](kb/known-limitations.md) before relying on Tethon outside a personal or trusted-team deployment.
 
 ## Repo
 
 - `control/` — Go control plane: hub, host daemon, CLI, protocol, agent adapters, session log, repo/worktree management
 - `web/` — SvelteKit companion app
-- `mobile/` — Expo scaffold
+- `mobile/` — Expo mobile client
 - `deploy/hub/` — Dokploy/Compose hub deployment
 - `scripts/` — host install/run and project scripts
 - `kb/` — design brief, roadmap, runbooks, research, and limitations — start with [`kb/agent-control-design.md`](kb/agent-control-design.md)
@@ -162,3 +195,7 @@ Not implemented yet:
 - [`kb/hub-deploy-dokploy.md`](kb/hub-deploy-dokploy.md) — preferred Dokploy deployment path for `hub.tethon.dev`
 - [`kb/macos-host-daemon.md`](kb/macos-host-daemon.md) — macOS install/run story for `tethon-hostd`
 - [`kb/known-limitations.md`](kb/known-limitations.md) — current gaps and caveats
+
+## License
+
+Tethon is available under the [MIT License](LICENSE).

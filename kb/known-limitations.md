@@ -13,11 +13,12 @@ the target design in `kb/agent-control-design.md`.
 
 ## Clients
 
-- The web companion is the only usable client for the current happy path.
-- The mobile app is scaffolded, but it does not yet list sessions, stream
-  events, send input, persist cursors, authenticate to the hub, or resolve
-  approvals.
-- Push approvals are not implemented.
+- The web and mobile clients both support the main session workflow.
+- The mobile app stores hub credentials in SecureStore, lists and starts
+  sessions, persists event streams, sends input, resolves approvals, and can
+  respond to approval push notifications.
+- The mobile client currently uses an internal EAS preview build rather than a
+  public app-store release.
 - Raw PTY/xterm terminal support is not implemented in web or mobile.
 
 ## Session Replay
@@ -27,6 +28,8 @@ the target design in `kb/agent-control-design.md`.
 - The web stream helper can pass a `from` value, but the current session page
   starts streams from `0` and dedupes by `seq` in memory. It does not persist
   the last cursor across reloads yet.
+- The mobile client persists session events and resumes from the last stored
+  cursor.
 
 ## Hub State
 
@@ -61,6 +64,8 @@ the target design in `kb/agent-control-design.md`.
   bounded/redacted input and result payloads. `diff_available` and broader
   non-Claude tool-use event coverage are target protocol ideas, not current
   emitted events.
+- Claude Code is the only production agent adapter. Codex and other adapters
+  are planned.
 
 ## Web Deployment
 

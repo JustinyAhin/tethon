@@ -3,7 +3,18 @@
 .dolt/
 *.db
 
+# Local Beads runtime and backup files
+.beads-backup/
+.beads/*.lock
+.beads/*.log
+.beads/*.pid
+.beads/*.port
+
 # Local release builds
 control/dist/
 
 node_modules/
+
+# OS metadata
+.DS_Store
+Thumbs.db

@@ -2,8 +2,8 @@
 
 This is the current happy path from install to a first remote `claude-cli`
 session running on a Mac host. It uses the hub, the macOS host daemon, and the
-web companion. Mobile is intentionally not in this path yet; the mobile client
-is covered by the Phase 8 client-parity work.
+web companion. The mobile client supports the same main session workflow after
+it has been connected to the hub through an internal preview build.
 
 For current gaps that affect this path, see `kb/known-limitations.md`.
 
@@ -11,8 +11,6 @@ For current gaps that affect this path, see `kb/known-limitations.md`.
 
 - A hub deployed at a public HTTPS URL, for example `https://hub.tethon.dev`.
 - The hub bearer token configured as `TETHON_HUB_AUTH_TOKEN`.
-- Tailscale on the VPS and Mac, or another route that lets the VPS hub reach
-  the Mac daemon URL.
 - Go and Bun installed where you run the repo tools.
 - Claude Code installed and authenticated on the Mac:
 
@@ -55,7 +53,7 @@ On the Mac, from the repo root:
 ```sh
 scripts/macos-hostd.sh install \
   --hub-url https://hub.tethon.dev \
-  --addr <mac-tailscale-ip>:39181 \
+  --addr 127.0.0.1:39181 \
   --repo-root /path/to/repos \
   --name "$(hostname -s)"
 ```
@@ -94,9 +92,8 @@ The doctor checks launchd, local hostd `/healthz` and `/status`, hub `/healthz`,
 token presence, and whether the host appears online through the hub when a token
 is configured.
 
-Current routing caveat: the hub calls the host daemon URL that the Mac
-registers. Until host-initiated persistent hub connections land, the VPS must be
-able to reach `http://<mac-tailscale-ip>:39181`.
+Session operations use the host daemon's outbound WebSocket to the hub. The
+hub does not need to reach the local diagnostics listener.
 
 ## 3. Confirm the host is online
 
@@ -230,12 +227,12 @@ Use `deny` or `reply <request-id> <text>` instead of `approve` when appropriate.
 - Host appears but is offline: heartbeats are not reaching the hub. Check
   hostd logs for `hub_heartbeat_failed`, the retry delay, Mac sleep/network
   state, and hub logs for `hub_host_heartbeat`.
-- Host online but sessions fail: the hub cannot reach
-  `http://<mac-tailscale-ip>:39181`, or the repo path is not registered.
-- Host online but session list/start returns `502`: check Dokploy hub logs and
-  confirm the VPS can call the host's logged `advertised_url` directly.
+- Host online but sessions fail: check `hub_reverse_connected` in the host
+  logs, then confirm the repository is registered.
+- Host online but session list/start returns `502`: check the hub and hostd
+  logs for a dropped reverse WebSocket or a rejected session operation.
 - Local daemon status unclear: query hostd directly with
-  `curl -fsS http://<mac-tailscale-ip>:39181/status` and check `registered`,
+  `curl -fsS http://127.0.0.1:39181/status` and check `registered`,
   `retrying`, `last_hub_success`, and `last_hub_failure`.
 - `unknown agent`: `claude` was not available to `tethon-hostd` when it started.
 - `prompt is required for claude-cli sessions`: start real Claude sessions with
