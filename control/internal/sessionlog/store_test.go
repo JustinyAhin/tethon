@@ -57,11 +57,14 @@ func TestReplayPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake"})
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "fake", RequestedModel: "provider-alias"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.AppendEvent(ctx, session.ID, protocol.EventOutput, protocol.OutputPayload{Text: "persisted"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSessionModel(ctx, session.ID, "provider-resolved-model"); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -73,6 +76,13 @@ func TestReplayPersistsAcrossReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
+	stored, err := reopened.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RequestedModel != "provider-alias" || stored.Model != "provider-resolved-model" {
+		t.Fatalf("model metadata after reopen = %+v", stored)
+	}
 
 	events, err := reopened.Replay(ctx, session.ID, 0)
 	if err != nil {
@@ -150,11 +160,12 @@ func TestSessionMetadataPersistsAndModelUpdates(t *testing.T) {
 	store := newTestStore(t)
 
 	session, err := store.CreateSession(ctx, CreateSessionParams{
-		Repo:    ".",
-		Agent:   "claude-cli",
-		Backend: "anthropic",
-		CLI:     "claude",
-		Model:   "claude-sonnet-4-5",
+		Repo:           ".",
+		Agent:          "claude-cli",
+		Backend:        "anthropic",
+		CLI:            "claude",
+		Model:          "claude-sonnet-4-5",
+		RequestedModel: "sonnet",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -169,8 +180,15 @@ func TestSessionMetadataPersistsAndModelUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Backend != "anthropic" || got.CLI != "claude" || got.Model != "claude-opus-4-8" {
+	if got.Backend != "anthropic" || got.CLI != "claude" || got.Model != "claude-opus-4-8" || got.RequestedModel != "sonnet" {
 		t.Fatalf("unexpected stored metadata: %+v", got)
+	}
+	summaries, err := store.ListSessionSummaries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].RequestedModel != "sonnet" || summaries[0].Model != "claude-opus-4-8" {
+		t.Fatalf("unexpected model summary: %+v", summaries)
 	}
 }
 
@@ -193,6 +211,10 @@ func TestOpenMigratesSessionMetadataColumns(t *testing.T) {
 	)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO sessions (id, repo, cwd, branch, agent, status, created_at, updated_at)
+		VALUES ('legacy', '.', '', '', 'fake', 'done', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +224,14 @@ func TestOpenMigratesSessionMetadataColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "claude-cli", Backend: "anthropic", CLI: "claude"})
+	legacy, err := store.GetSession(ctx, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.RequestedModel != "" || legacy.Model != "" || legacy.Codex != nil {
+		t.Fatalf("legacy model defaults = %+v", legacy)
+	}
+	session, err := store.CreateSession(ctx, CreateSessionParams{Repo: ".", Agent: "claude-cli", Backend: "anthropic", CLI: "claude", RequestedModel: "sonnet"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +239,7 @@ func TestOpenMigratesSessionMetadataColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Backend != "anthropic" || got.CLI != "claude" {
+	if got.Backend != "anthropic" || got.CLI != "claude" || got.RequestedModel != "sonnet" {
 		t.Fatalf("metadata columns were not migrated: %+v", got)
 	}
 }

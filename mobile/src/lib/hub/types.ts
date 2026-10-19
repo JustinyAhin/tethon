@@ -8,6 +8,10 @@ import {
   EventSessionStarted,
   EventToolResult,
   EventUsage,
+  EventCodexState,
+  EventCodexEvent,
+  EventCodexRequest,
+  EventCodexRequestResolved,
 } from '@tethon/hub-sdk/protocol';
 import type { Event as ProtocolEvent } from '@tethon/hub-sdk/protocol';
 
@@ -22,7 +26,11 @@ export type SessionEventType =
   | typeof EventToolResult
   | typeof EventUsage
   | typeof EventDone
-  | typeof EventError;
+  | typeof EventError
+  | typeof EventCodexState
+  | typeof EventCodexEvent
+  | typeof EventCodexRequest
+  | typeof EventCodexRequestResolved;
 
 export type SessionEvent = Omit<ProtocolEvent, 'type'> & {
   type: SessionEventType;
@@ -38,6 +46,10 @@ export {
   EventSessionStarted,
   EventToolResult,
   EventUsage,
+  EventCodexState,
+  EventCodexEvent,
+  EventCodexRequest,
+  EventCodexRequestResolved,
 };
 
 export type {
@@ -62,4 +74,17 @@ export type {
   ListSessionsResponse,
   ToolResultPayload,
   UsagePayload,
+  CodexSessionState,
+  CodexEventPayload,
+  CodexRequestPayload,
+  CodexRequestResolvedPayload,
+  CodexRespondRequest,
+  ModelCatalog,
+  ModelInfo,
+  CodexSessionResponse,
+  CodexHistoryResponse,
+  CodexHistoryTurn,
+  CodexConversation,
+  CodexConversationsResponse,
+  CodexSettingsResponse,
 } from '@tethon/hub-sdk/protocol';

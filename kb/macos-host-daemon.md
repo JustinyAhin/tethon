@@ -6,7 +6,7 @@ Run script commands from the repository root.
 ## Prerequisites
 
 - A deployed HTTPS hub and an accepted bearer token.
-- Go and Claude Code installed.
+- Go and the selected agent CLI installed.
 - A Git repository or a parent directory containing repositories.
 
 Confirm Claude Code authentication:
@@ -14,6 +14,10 @@ Confirm Claude Code authentication:
 ```sh
 claude auth status --text
 ```
+
+For native Codex, install a supported version and sign in with `codex login`.
+Check the version with `codex app-server daemon version`.
+See [supported versions and ownership](agent-control-design.md#native-codex-sessions).
 
 The daemon opens an outbound WebSocket to the hub.
 Keep its diagnostics listener on a local or private interface.
@@ -32,6 +36,7 @@ scripts/macos-hostd.sh install \
 For a parent directory, the daemon registers immediate child repositories.
 
 The script builds `~/.local/bin/tethon-hostd`, writes the LaunchAgent, and starts it.
+Install and restart enable the LaunchAgent if macOS has disabled it.
 It creates the state directory and a protected token file if needed.
 Set the accepted hub token in `~/.config/tethon/hostd.env`:
 
@@ -88,10 +93,24 @@ go run ./cmd/tethon hosts list --hub-url https://hub.tethon.dev
 Expected result:
 
 - The host has `online: true`.
-- Its agent list includes `claude-cli`.
+- Its agent list includes the installed, signed-in agent.
 - Its repository list includes the intended repository.
 
 The host log should include `host_registered` and `hub_reverse_connected`.
+
+For Codex, select the host and working folder in the phone or browser.
+Enter a prompt to start a conversation. Use Find conversations to resume one.
+Keep the default settings unless an override is needed.
+An override on a resumed conversation requires a prompt for the next turn.
+
+To open the same native terminal on that host, run from `control/`:
+
+```sh
+go run ./cmd/tethon session attach <host-id/session-id> --hub-url https://hub.tethon.dev
+```
+
+Stop interrupts a turn. Archive, history deletion, and workspace cleanup are
+separate actions. Native history deletion preserves working files.
 
 ## Troubleshooting
 

@@ -3,13 +3,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { StatusPill } from '@/components/status-pill';
 import { sessionPath } from '@/lib/hub/client';
+import { nativeSessionLabel } from '@/lib/hub/session-status';
 import type { SessionSummary } from '@/lib/hub/types';
 
 type SessionCardProps = {
   session: SessionSummary;
 };
 
-export const SessionCard = ({ session }: SessionCardProps) => {
+const SessionCard = ({ session }: SessionCardProps) => {
   const router = useRouter();
   const { hostId, localId } = sessionPath(session.id);
 
@@ -32,7 +33,13 @@ export const SessionCard = ({ session }: SessionCardProps) => {
             {hostId} · {session.agent}
           </Text>
         </View>
-        <StatusPill status={session.status} />
+        <StatusPill
+          status={
+            session.agent === 'codex-cli'
+              ? nativeSessionLabel(session.codex)
+              : session.status
+          }
+        />
       </View>
 
       <View style={styles.meta}>
@@ -58,38 +65,48 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     padding: 14,
   },
+
   pressed: {
     opacity: 0.75,
   },
+
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 12,
   },
+
   titleBlock: {
     flex: 1,
     gap: 4,
   },
+
   title: {
     color: '#101820',
     fontSize: 16,
     fontWeight: '700',
   },
+
   subtitle: {
     color: '#5c6873',
     fontSize: 13,
     lineHeight: 18,
   },
+
   meta: {
     gap: 4,
   },
+
   metaText: {
     color: '#5c6873',
     fontSize: 13,
     lineHeight: 18,
   },
+
   metaLabel: {
     color: '#8a96a3',
   },
 });
+
+export { SessionCard };

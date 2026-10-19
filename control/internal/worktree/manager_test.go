@@ -62,6 +62,39 @@ func TestManagerRemoveUnknown(t *testing.T) {
 	}
 }
 
+func TestNativeCleanupPreservesDirtyFiles(t *testing.T) {
+	ctx := context.Background()
+	repo := initRepo(t)
+	manager := NewManager(filepath.Join(t.TempDir(), "worktrees"))
+
+	workspace, err := manager.Create(ctx, CreateOptions{ID: "native", RepoID: "repo", RepoPath: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	file := filepath.Join(workspace.Path, "untracked-work.txt")
+	writeFile(t, file, "preserve this work")
+
+	if err := manager.RemoveClean(ctx, workspace.ID); err == nil {
+		t.Fatal("native cleanup removed a dirty workspace")
+	}
+
+	content, err := os.ReadFile(file)
+	if err != nil || string(content) != "preserve this work" {
+		t.Fatalf("dirty work was lost: %q, %v", content, err)
+	}
+	if _, ok := manager.Get(workspace.ID); !ok {
+		t.Fatal("failed cleanup discarded the ownership record")
+	}
+
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RemoveClean(ctx, workspace.ID); err != nil {
+		t.Fatalf("clean workspace could not be removed: %v", err)
+	}
+}
+
 func TestManagerAdoptRejectsPathOutsideRoot(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "worktrees")
 	mgr := NewManager(root)

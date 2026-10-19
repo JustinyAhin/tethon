@@ -1,6 +1,8 @@
 import { command, form, query } from '$app/server';
 import * as v from 'valibot';
+
 import type { SessionSummary } from '$lib/types';
+
 import {
 	HubAPIError,
 	cancelSession as cancelHubSession,
@@ -46,11 +48,46 @@ const CreateSessionSchema = v.pipe(
 		base_ref: optionalText,
 		agent: optionalText,
 		permission_mode: optionalText,
+		requested_model: optionalText,
+		request_id: optionalText,
+		reasoning_effort: optionalText,
+		codex_permission_profile: optionalText,
+		workspace_mode: v.optional(v.picklist(['', 'existing', 'isolated']), ''),
+		native_thread_id: optionalText,
 		prompt: optionalText
 	}),
 	v.forward(
-		v.check((d) => Boolean(d.repo_id || d.repo), 'Choose a repo or enter a repo path.'),
+		v.check(
+			(data) => data.agent !== 'codex-cli' || v.is(v.pipe(v.string(), v.uuid()), data.request_id),
+			'Refresh the form and try again.'
+		),
+		['request_id']
+	),
+	v.forward(
+		v.check(
+			(d) => Boolean(d.repo_id || d.repo || (d.agent === 'codex-cli' && d.native_thread_id)),
+			'Choose a repo or enter a repo path.'
+		),
 		['repo_id']
+	),
+	v.forward(
+		v.check(
+			(data) => data.agent !== 'codex-cli' || Boolean(data.native_thread_id || data.prompt),
+			'Enter a message to start a new conversation.'
+		),
+		['prompt']
+	),
+	v.forward(
+		v.check(
+			(data) =>
+				!(
+					data.agent === 'codex-cli' &&
+					data.native_thread_id &&
+					(data.requested_model || data.reasoning_effort || data.codex_permission_profile)
+				) || Boolean(data.prompt),
+			'Enter a message to apply these settings on the next turn.'
+		),
+		['prompt']
 	)
 );
 
@@ -68,6 +105,12 @@ const createSession = form(CreateSessionSchema, async (data): Promise<CreateResu
 	if (data.base_ref) body.base_ref = data.base_ref;
 	if (data.permission_mode) body.permission_mode = data.permission_mode;
 	if (data.prompt) body.prompt = data.prompt;
+	if (data.requested_model) body.requested_model = data.requested_model;
+	if (data.request_id) body.request_id = data.request_id;
+	if (data.reasoning_effort) body.reasoning_effort = data.reasoning_effort;
+	if (data.codex_permission_profile) body.codex_permission_profile = data.codex_permission_profile;
+	if (data.workspace_mode) body.workspace_mode = data.workspace_mode;
+	if (data.native_thread_id) body.native_thread_id = data.native_thread_id;
 
 	try {
 		const out = await createHubSession({ baseUrl: hubBase(), body });
@@ -80,14 +123,20 @@ const createSession = form(CreateSessionSchema, async (data): Promise<CreateResu
 
 const SendInputSchema = v.object({
 	id: v.pipe(v.string(), v.nonEmpty()),
-	text: v.pipe(v.string(), v.trim(), v.nonEmpty('Message is empty.'))
+	text: v.pipe(v.string(), v.trim(), v.nonEmpty('Message is empty.')),
+	mode: v.optional(v.picklist(['start', 'steer', 'queue'])),
+	turn_id: v.optional(v.string()),
+	request_id: v.optional(v.string()),
+	requested_model: v.optional(v.string()),
+	reasoning_effort: v.optional(v.string()),
+	codex_permission_profile: v.optional(v.string())
 });
 
 type SendResult = { ok: true } | { ok: false; error: string };
 
-const sendInput = command(SendInputSchema, async ({ id, text }): Promise<SendResult> => {
+const sendInput = command(SendInputSchema, async (data): Promise<SendResult> => {
 	try {
-		await sendHubInput({ baseUrl: hubBase(), id, text });
+		await sendHubInput({ baseUrl: hubBase(), ...data });
 		return { ok: true };
 	} catch (err) {
 		if (err instanceof HubAPIError) return { ok: false, error: err.message };
@@ -124,12 +173,13 @@ const resolveApproval = command(
 );
 
 const CancelSessionSchema = v.object({
-	id: v.pipe(v.string(), v.nonEmpty())
+	id: v.pipe(v.string(), v.nonEmpty()),
+	turn_id: v.optional(v.string())
 });
 
-const cancelSession = command(CancelSessionSchema, async ({ id }): Promise<SendResult> => {
+const cancelSession = command(CancelSessionSchema, async ({ id, turn_id }): Promise<SendResult> => {
 	try {
-		await cancelHubSession({ baseUrl: hubBase(), id });
+		await cancelHubSession({ baseUrl: hubBase(), id, turn_id });
 		return { ok: true };
 	} catch (err) {
 		if (err instanceof HubAPIError) return { ok: false, error: err.message };

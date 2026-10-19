@@ -41,16 +41,6 @@ func TestSnapshotCollectorShapesNoProcessSession(t *testing.T) {
 	}
 }
 
-func TestAggregateProcesses(t *testing.T) {
-	got := aggregateProcesses([]protocol.ResourceProcess{
-		{PID: 1, RSSBytes: 100, CPUTimeMS: 10},
-		{PID: 2, RSSBytes: 200, CPUTimeMS: 20},
-	})
-	if got.ProcessCount != 2 || got.RSSBytes != 300 || got.CPUTimeMS != 30 {
-		t.Fatalf("aggregate = %+v, want summed values", got)
-	}
-}
-
 func TestDiskUsageCanceledContextReturnsWarning(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -27,16 +27,19 @@ type Store struct {
 }
 
 type CreateSessionParams struct {
-	RepoID  string
-	Repo    string
-	CWD     string
-	Branch  string
-	BaseRef string
-	Agent   string
-	Backend string
-	CLI     string
-	Model   string
-	Status  string
+	CreateRequestID   string
+	CreateFingerprint string
+	RepoID            string
+	Repo              string
+	CWD               string
+	Branch            string
+	BaseRef           string
+	Agent             string
+	Backend           string
+	CLI               string
+	Model             string
+	RequestedModel    string
+	Status            string
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -51,6 +54,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+
 	return store, nil
 }
 
@@ -89,12 +93,26 @@ func (s *Store) init(ctx context.Context) error {
 			resolved_at TEXT,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS codex_requests (
+			session_id TEXT NOT NULL,
+			connection_id TEXT NOT NULL,
+			request_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			result_json TEXT,
+			created_at TEXT NOT NULL,
+			resolved_at TEXT,
+			PRIMARY KEY (session_id, connection_id, request_id),
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		)`,
 	}
+
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
+
 	if err := s.addColumnIfMissing(ctx, "sessions", "backend", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -102,6 +120,12 @@ func (s *Store) init(ctx context.Context) error {
 		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "sessions", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "requested_model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(ctx, "sessions", "codex_state", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := s.addColumnIfMissing(ctx, "sessions", "repo_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -113,7 +137,12 @@ func (s *Store) init(ctx context.Context) error {
 	if err := s.addColumnIfMissing(ctx, "sessions", "worktree_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	return nil
+
+	if err := s.initCodexActions(ctx); err != nil {
+		return err
+	}
+
+	return s.initCreateRequests(ctx)
 }
 
 func (s *Store) addColumnIfMissing(ctx context.Context, table, column, definition string) error {
@@ -149,28 +178,66 @@ func (s *Store) CreateSession(ctx context.Context, params CreateSessionParams) (
 	if params.Status == "" {
 		params.Status = "running"
 	}
+
 	now := time.Now().UTC()
 	session := protocol.Session{
-		ID:        newID("ses"),
-		RepoID:    params.RepoID,
-		Repo:      params.Repo,
-		CWD:       params.CWD,
-		Branch:    params.Branch,
-		BaseRef:   params.BaseRef,
-		Agent:     params.Agent,
-		Backend:   params.Backend,
-		CLI:       params.CLI,
-		Model:     params.Model,
-		Status:    params.Status,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             newID("ses"),
+		RepoID:         params.RepoID,
+		Repo:           params.Repo,
+		CWD:            params.CWD,
+		Branch:         params.Branch,
+		BaseRef:        params.BaseRef,
+		Agent:          params.Agent,
+		Backend:        params.Backend,
+		CLI:            params.CLI,
+		Model:          params.Model,
+		RequestedModel: params.RequestedModel,
+		Status:         params.Status,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id, repo_id, repo, cwd, branch, base_ref, worktree_path, agent, backend, cli, model, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.RepoID, session.Repo, session.CWD, session.Branch, session.BaseRef, session.WorktreePath, session.Agent, session.Backend, session.CLI, session.Model, session.Status, formatTime(session.CreatedAt), formatTime(session.UpdatedAt))
+
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return protocol.Session{}, err
 	}
+	defer tx.Rollback()
+
+	if params.CreateRequestID != "" {
+		_, err := scanCreateRequestBinding(tx.QueryRowContext(ctx, createRequestLookup, params.CreateRequestID, params.CreateRequestID))
+		if err == nil {
+			return protocol.Session{}, ErrCodexActionConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return protocol.Session{}, err
+		}
+	}
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO sessions (
+		id, repo_id, repo, cwd, branch, base_ref, worktree_path,
+		agent, backend, cli, model, requested_model, status,
+		created_at, updated_at, create_request_id, create_fingerprint
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.RepoID, session.Repo, session.CWD,
+		session.Branch, session.BaseRef, session.WorktreePath,
+		session.Agent, session.Backend, session.CLI, session.Model,
+		session.RequestedModel, session.Status, formatTime(session.CreatedAt),
+		formatTime(session.UpdatedAt), params.CreateRequestID, params.CreateFingerprint,
+	)
+	if err != nil {
+		return protocol.Session{}, err
+	}
+
+	if params.CreateRequestID != "" {
+		if err := bindCreatedSession(ctx, tx, params.CreateRequestID, params.CreateFingerprint, session.ID, "acknowledged"); err != nil {
+			return protocol.Session{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return protocol.Session{}, err
+	}
+
 	return session, nil
 }
 
@@ -192,7 +259,7 @@ func (s *Store) SetSessionWorktree(ctx context.Context, sessionID, worktreePath,
 	return nil
 }
 
-const sessionColumns = `id, repo_id, repo, cwd, branch, base_ref, worktree_path, agent, backend, cli, model, status, created_at, updated_at`
+const sessionColumns = `id, repo_id, repo, cwd, branch, base_ref, worktree_path, agent, backend, cli, model, requested_model, status, created_at, updated_at, codex_state`
 
 func (s *Store) GetSession(ctx context.Context, id string) (protocol.Session, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, id)
@@ -258,9 +325,14 @@ func (s *Store) ListSessionsByStatus(ctx context.Context, statuses ...string) ([
 
 func scanSession(scanner eventScanner) (protocol.Session, error) {
 	var session protocol.Session
-	var createdAt, updatedAt string
-	if err := scanner.Scan(&session.ID, &session.RepoID, &session.Repo, &session.CWD, &session.Branch, &session.BaseRef, &session.WorktreePath, &session.Agent, &session.Backend, &session.CLI, &session.Model, &session.Status, &createdAt, &updatedAt); err != nil {
+	var createdAt, updatedAt, codexState string
+	if err := scanner.Scan(&session.ID, &session.RepoID, &session.Repo, &session.CWD, &session.Branch, &session.BaseRef, &session.WorktreePath, &session.Agent, &session.Backend, &session.CLI, &session.Model, &session.RequestedModel, &session.Status, &createdAt, &updatedAt, &codexState); err != nil {
 		return protocol.Session{}, err
+	}
+	if codexState != "" {
+		if err := json.Unmarshal([]byte(codexState), &session.Codex); err != nil {
+			return protocol.Session{}, err
+		}
 	}
 	session.CreatedAt = parseTime(createdAt)
 	session.UpdatedAt = parseTime(updatedAt)
@@ -269,9 +341,14 @@ func scanSession(scanner eventScanner) (protocol.Session, error) {
 
 func scanSessionSummary(scanner eventScanner) (protocol.SessionSummary, error) {
 	var summary protocol.SessionSummary
-	var createdAt, updatedAt, worktreePath string
-	if err := scanner.Scan(&summary.ID, &summary.RepoID, &summary.Repo, &summary.CWD, &summary.Branch, &summary.BaseRef, &worktreePath, &summary.Agent, &summary.Backend, &summary.CLI, &summary.Model, &summary.Status, &createdAt, &updatedAt, &summary.LastSeq); err != nil {
+	var createdAt, updatedAt, worktreePath, codexState string
+	if err := scanner.Scan(&summary.ID, &summary.RepoID, &summary.Repo, &summary.CWD, &summary.Branch, &summary.BaseRef, &worktreePath, &summary.Agent, &summary.Backend, &summary.CLI, &summary.Model, &summary.RequestedModel, &summary.Status, &createdAt, &updatedAt, &codexState, &summary.LastSeq); err != nil {
 		return protocol.SessionSummary{}, err
+	}
+	if codexState != "" {
+		if err := json.Unmarshal([]byte(codexState), &summary.Codex); err != nil {
+			return protocol.SessionSummary{}, err
+		}
 	}
 	summary.CreatedAt = parseTime(createdAt)
 	summary.UpdatedAt = parseTime(updatedAt)
@@ -346,6 +423,12 @@ func (s *Store) DeleteTerminalSession(ctx context.Context, sessionID string) err
 	if _, err = tx.ExecContext(ctx, `DELETE FROM pending_approvals WHERE session_id = ?`, sessionID); err != nil {
 		return err
 	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM codex_requests WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM codex_actions WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM events WHERE session_id = ?`, sessionID); err != nil {
 		return err
 	}
@@ -362,6 +445,10 @@ func isTerminalStatus(status string) bool {
 
 func (s *Store) AppendEvent(ctx context.Context, sessionID, eventType string, payload any) (protocol.Event, error) {
 	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return protocol.Event{}, err
+	}
+	payloadJSON, err = boundCodexEventJSON(eventType, payloadJSON)
 	if err != nil {
 		return protocol.Event{}, err
 	}

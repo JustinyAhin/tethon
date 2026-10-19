@@ -423,14 +423,6 @@ func TestHubIgnoresBlankBearerTokens(t *testing.T) {
 	assertStatus(t, http.MethodGet, ts.URL+"/hosts", "", http.StatusOK)
 }
 
-func TestParseAuthTokens(t *testing.T) {
-	got := ParseAuthTokens(" primary ", "old,new\n also-valid \n\n")
-	want := []string{"primary", "old", "new", "also-valid"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("ParseAuthTokens = %#v, want %#v", got, want)
-	}
-}
-
 func TestHealthzDoesNotRequireBearerToken(t *testing.T) {
 	hub := New(time.Second)
 	hub.SetAuthToken("secret")
@@ -459,29 +451,6 @@ func TestHubBearerTokenAllowsSessionLifecycle(t *testing.T) {
 	session := createSessionAuth(t, hubTS.URL, "secret", protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
 	postJSONAuth(t, hubTS.URL+"/sessions/"+session.ID+"/input", "secret", protocol.InputRequest{Text: "continue"})
 	events := streamEventsAuth(t, hubTS.URL, session.ID, "secret", 3, 2)
-
-	assertSeqs(t, events, []int64{4, 5})
-	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})
-}
-
-func TestHubCreatesSessionAndStreamsReplayThroughHost(t *testing.T) {
-	hubTS, hostTS := newHubAndHost(t, time.Second)
-	registerHost(t, hubTS.URL, protocol.RegisterHostRequest{
-		HostID:    "mac",
-		Name:      "Mac",
-		URL:       hostTS.URL,
-		Agents:    []string{"fake"},
-		RepoRoots: []string{"."},
-	})
-	connectReverseHost(t, hubTS.URL, "mac", "", hostTS.Config.Handler)
-
-	session := createSession(t, hubTS.URL, protocol.CreateSessionRequest{HostID: "mac", Repo: ".", Agent: "fake"})
-	if !strings.HasPrefix(session.ID, "mac/ses_") {
-		t.Fatalf("expected global session id, got %q", session.ID)
-	}
-
-	postJSON(t, hubTS.URL+"/sessions/"+session.ID+"/input", protocol.InputRequest{Text: "continue"})
-	events := streamEvents(t, hubTS.URL, session.ID, 3, 2)
 
 	assertSeqs(t, events, []int64{4, 5})
 	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})

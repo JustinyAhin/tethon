@@ -1,12 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
-import { useHeaderHeight } from 'expo-router/react-navigation';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,10 +14,23 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { CodexSettingsSummary } from '@/components/codex-settings-summary';
+import {
+  loadCreationDraft,
+  saveCreationDraft,
+  clearCreationDraft,
+  getCreationRequestId,
+  clearCreationIntent,
+  type CreationDraft,
+} from '@/lib/hub/creation-intents';
+
 import {
   createSession as createHubSession,
   fetchHosts,
   fetchRepoRefs,
+  fetchModelCatalog,
+  fetchNativeConversations,
+  type NativeConversation,
   HubAuthError,
   HubRequestError,
   sessionPath,
@@ -30,6 +40,8 @@ import type {
   CreateSessionRequest,
   HostSummary,
   RepoRefsResponse,
+  ModelCatalog,
+  CodexSettingsResponse,
 } from '@/lib/hub/types';
 
 type SelectOption = {
@@ -49,8 +61,8 @@ const permissionModes: SelectOption[] = [
 
 export default function NewSession() {
   const router = useRouter();
-  const headerHeight = useHeaderHeight();
-  const { invalidate, status } = useAuth();
+  const { invalidate, status, hubUrl } = useAuth();
+
   const [hosts, setHosts] = useState<HostSummary[]>([]);
   const [hostsLoading, setHostsLoading] = useState(true);
   const [hostsError, setHostsError] = useState<string | null>(null);
@@ -59,6 +71,29 @@ export default function NewSession() {
   const [useRawRepo, setUseRawRepo] = useState(false);
   const [rawRepo, setRawRepo] = useState('');
   const [agent, setAgent] = useState('');
+
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [model, setModel] = useState('');
+  const [reasoning, setReasoning] = useState('');
+  const [permissionProfile, setPermissionProfile] = useState('');
+  const [hostSettings, setHostSettings] =
+    useState<CodexSettingsResponse | null>(null);
+
+  const [workspaceMode, setWorkspaceMode] = useState('existing');
+  const [conversations, setConversations] = useState<NativeConversation[]>([]);
+  const [conversationSearch, setConversationSearch] = useState('');
+  const [nativeThreadId, setNativeThreadId] = useState('');
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [conversationsError, setConversationsError] = useState<string | null>(
+    null,
+  );
+  const [conversationCursor, setConversationCursor] = useState<
+    string | undefined
+  >();
+  const conversationRevision = useRef(0);
+
   const [permissionMode, setPermissionMode] = useState('default');
   const [cwd, setCwd] = useState('');
   const [branch, setBranch] = useState('');
@@ -67,8 +102,268 @@ export default function NewSession() {
   const [refs, setRefs] = useState<RepoRefsResponse | null>(null);
   const [refsLoading, setRefsLoading] = useState(false);
   const [refsError, setRefsError] = useState<string | null>(null);
+
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [restoredHub, setRestoredHub] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const draftCleared = useRef(false);
+  const latestDraft = useRef<{ hubUrl: string; draft: CreationDraft } | null>(
+    null,
+  );
+
+  const isCodex = agent === 'codex-cli';
+  const isResume = isCodex && nativeThreadId.length > 0;
+  const selectedModel = catalog?.models.find((item) => item.id === model);
+  const draftReady = hubUrl !== null && restoredHub === hubUrl;
+  const draft = useMemo<CreationDraft>(
+    () => ({
+      hostId,
+      repoId,
+      useRawRepo,
+      rawRepo,
+      agent,
+      permissionMode,
+      permissionProfile,
+      cwd,
+      branch,
+      baseRef,
+      prompt,
+      model,
+      reasoning,
+      workspaceMode,
+      nativeThreadId,
+      conversationSearch,
+    }),
+    [
+      hostId,
+      repoId,
+      useRawRepo,
+      rawRepo,
+      agent,
+      permissionMode,
+      permissionProfile,
+      cwd,
+      branch,
+      baseRef,
+      prompt,
+      model,
+      reasoning,
+      workspaceMode,
+      nativeThreadId,
+      conversationSearch,
+    ],
+  );
+
+  useEffect(() => {
+    if (hubUrl === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadCreationDraft(hubUrl)
+      .then((stored) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (stored !== null) {
+          setHostId(stored.hostId);
+          setRepoId(stored.repoId);
+          setUseRawRepo(stored.useRawRepo);
+          setRawRepo(stored.rawRepo);
+          setAgent(stored.agent);
+
+          setPermissionMode(stored.permissionMode);
+          setPermissionProfile(stored.permissionProfile);
+          setCatalogLoading(stored.agent.length > 0);
+
+          setCwd(stored.cwd);
+          setBranch(stored.branch);
+          setBaseRef(stored.baseRef);
+          setPrompt(stored.prompt);
+          setModel(stored.model);
+          setReasoning(stored.reasoning);
+          setWorkspaceMode(stored.workspaceMode);
+          setNativeThreadId(stored.nativeThreadId);
+          setConversationSearch(stored.conversationSearch);
+        }
+
+        setRestoredHub(hubUrl);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRestoredHub(hubUrl);
+          setDraftError('Could not restore the saved draft.');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hubUrl]);
+
+  useEffect(() => {
+    if (!draftReady || hubUrl === null || !draft.hostId) {
+      return;
+    }
+
+    draftCleared.current = false;
+    latestDraft.current = { hubUrl, draft };
+
+    const timer = setTimeout(() => {
+      if (draftCleared.current) {
+        return;
+      }
+
+      void saveCreationDraft({ hubUrl, draft })
+        .then(() => setDraftError(null))
+        .catch(() => setDraftError('Could not save this draft.'));
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [draft, draftReady, hubUrl]);
+
+  useEffect(
+    () => () => {
+      if (latestDraft.current !== null && !draftCleared.current) {
+        void saveCreationDraft(latestDraft.current).catch(() => {});
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!hostId || !agent) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void fetchModelCatalog({ hostId, agent })
+      .then((response) => {
+        if (!cancelled) {
+          setCatalog(response);
+        }
+      })
+      .catch(async (caught: unknown) => {
+        if (cancelled) {
+          return;
+        }
+
+        if (caught instanceof HubAuthError) {
+          await invalidate();
+          return;
+        }
+
+        setCatalogError(
+          'Models are unavailable. You can use the host default.',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCatalogLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agent, hostId, invalidate]);
+
+  useEffect(() => {
+    if (!isCodex || !hostId) {
+      return;
+    }
+
+    conversationRevision.current += 1;
+    let cancelled = false;
+
+    const timer = setTimeout(() => {
+      setConversations([]);
+      setConversationsError(null);
+      setConversationCursor(undefined);
+      setConversationsLoading(true);
+
+      void fetchNativeConversations({ hostId, search: conversationSearch })
+        .then((response) => {
+          if (!cancelled) {
+            setConversations(response.conversations ?? []);
+            setConversationCursor(response.next_cursor);
+          }
+        })
+        .catch(async (caught: unknown) => {
+          if (cancelled) {
+            return;
+          }
+
+          if (caught instanceof HubAuthError) {
+            await invalidate();
+            return;
+          }
+
+          setConversationsError(
+            'Could not load conversations. Check the Codex account and host connection.',
+          );
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setConversationsLoading(false);
+          }
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [conversationSearch, hostId, invalidate, isCodex]);
+
+  const loadMoreConversations = async () => {
+    if (!conversationCursor || conversationsLoading) {
+      return;
+    }
+
+    setConversationsLoading(true);
+    const revision = conversationRevision.current;
+
+    try {
+      const response = await fetchNativeConversations({
+        hostId,
+        search: conversationSearch,
+        cursor: conversationCursor,
+      });
+
+      if (revision !== conversationRevision.current) {
+        return;
+      }
+
+      setConversations((current) => [
+        ...current,
+        ...(response.conversations ?? []).filter(
+          (item) =>
+            !current.some((existing) => existing.thread_id === item.thread_id),
+        ),
+      ]);
+      setConversationCursor(response.next_cursor);
+    } catch (caught) {
+      if (revision !== conversationRevision.current) {
+        return;
+      }
+
+      if (caught instanceof HubAuthError) {
+        await invalidate();
+        return;
+      }
+
+      setConversationsError('Could not load more conversations. Try again.');
+    } finally {
+      if (revision === conversationRevision.current) {
+        setConversationsLoading(false);
+      }
+    }
+  };
 
   useEffect(() => {
     if (status !== 'signed-in') {
@@ -118,6 +413,18 @@ export default function NewSession() {
   );
   const repos = useMemo(() => selectedHost?.repos ?? [], [selectedHost]);
   const rawRepoMode = useRawRepo || repos.length === 0;
+  const selectedConversation = conversations.find(
+    (item) => item.thread_id === nativeThreadId,
+  );
+  const repoFolder = rawRepoMode
+    ? rawRepo.trim()
+    : repos.find((item) => item.id === repoId)?.path;
+  const workingCwd = isResume
+    ? selectedConversation?.cwd
+    : repoFolder
+      ? [repoFolder.replace(/\/$/, ''), cwd.trim()].filter(Boolean).join('/')
+      : undefined;
+
   const hostOptions = useMemo(
     () =>
       hosts.map((host) => ({
@@ -147,19 +454,18 @@ export default function NewSession() {
     ];
   }, [selectedHost]);
   const refOptions = useMemo<SelectOption[]>(
-    () =>
-      [
-        ...(refs?.branches ?? []).map((ref) => ({
-          value: ref,
-          label: ref,
-          detail: 'branch',
-        })),
-        ...(refs?.tags ?? []).map((ref) => ({
-          value: ref,
-          label: ref,
-          detail: 'tag',
-        })),
-      ],
+    () => [
+      ...(refs?.branches ?? []).map((ref) => ({
+        value: ref,
+        label: ref,
+        detail: 'branch',
+      })),
+      ...(refs?.tags ?? []).map((ref) => ({
+        value: ref,
+        label: ref,
+        detail: 'tag',
+      })),
+    ],
     [refs],
   );
 
@@ -214,11 +520,47 @@ export default function NewSession() {
     setUseRawRepo(false);
     setRawRepo('');
     setAgent('');
+
+    setCatalog(null);
+    setCatalogError(null);
+    setCatalogLoading(false);
+    setModel('');
+    setReasoning('');
+    setPermissionProfile('');
+    setHostSettings(null);
+
+    setConversations([]);
+    setConversationsError(null);
+    setConversationCursor(undefined);
+    setNativeThreadId('');
+    setConversationSearch('');
+    conversationRevision.current += 1;
+
+    setWorkspaceMode('existing');
     setPermissionMode('default');
     setBaseRef('');
     setRefs(null);
     setRefsError(null);
     setSubmitError(null);
+  };
+
+  const setSelectedAgent = (value: string) => {
+    setAgent(value);
+
+    setCatalog(null);
+    setCatalogError(null);
+    setCatalogLoading(value.length > 0);
+    setModel('');
+    setReasoning('');
+    setPermissionProfile('');
+    setHostSettings(null);
+
+    setNativeThreadId('');
+    setWorkspaceMode('existing');
+    setConversations([]);
+    setConversationsError(null);
+    setConversationCursor(undefined);
+    conversationRevision.current += 1;
   };
 
   const setSelectedRepo = (value: string) => {
@@ -240,35 +582,74 @@ export default function NewSession() {
     const cleanAgent = agent.trim();
     const cleanPrompt = prompt.trim();
 
+    if (isResume && (model || reasoning || permissionProfile) && !cleanPrompt) {
+      setSubmitError(
+        'Enter a message to apply the selected conversation options.',
+      );
+      return;
+    }
+
+    if (
+      permissionProfile &&
+      !hostSettings?.permission_profiles.profiles.some(
+        (profile) => profile.id === permissionProfile && profile.allowed,
+      )
+    ) {
+      setSubmitError(
+        'Confirm an allowed permission profile, or use the host default.',
+      );
+      return;
+    }
+
+    if (
+      model &&
+      (catalogLoading || catalog?.status !== 'ready' || !selectedModel)
+    ) {
+      setSubmitError('Confirm the selected model, or select the host default.');
+      return;
+    }
+
+    if (
+      reasoning &&
+      !selectedModel?.reasoning_efforts?.some((item) => item.id === reasoning)
+    ) {
+      setSubmitError(
+        'Select a supported reasoning option, or use the host default.',
+      );
+      return;
+    }
+
     if (cleanHostId.length === 0) {
       setSubmitError('Select a host.');
       return;
     }
 
-    if (rawRepoMode) {
+    if (!isResume && rawRepoMode) {
       if (cleanRawRepo.length === 0) {
         setSubmitError('Enter a repo path.');
         return;
       }
-    } else if (cleanRepoId.length === 0) {
+    } else if (!isResume && cleanRepoId.length === 0) {
       setSubmitError('Select a repo.');
       return;
     }
 
     const body: CreateSessionRequest = {
       host_id: cleanHostId,
-      cwd: cleanCwd,
-      branch: cleanBranch,
+      cwd: isResume ? '' : cleanCwd,
+      branch: isCodex && workspaceMode === 'existing' ? '' : cleanBranch,
       agent: cleanAgent,
     };
 
-    if (rawRepoMode) {
+    if (isResume) {
+      body.native_thread_id = nativeThreadId;
+    } else if (rawRepoMode) {
       body.repo = cleanRawRepo;
     } else {
       body.repo_id = cleanRepoId;
     }
 
-    if (cleanBaseRef.length > 0) {
+    if (cleanBaseRef.length > 0 && (!isCodex || workspaceMode === 'isolated')) {
       body.base_ref = cleanBaseRef;
     }
 
@@ -280,12 +661,55 @@ export default function NewSession() {
       body.permission_mode = permissionMode;
     }
 
+    if (isCodex && permissionProfile) {
+      body.codex_permission_profile = permissionProfile;
+    }
+
+    if (model && catalog?.status === 'ready' && selectedModel) {
+      body.requested_model = model;
+    }
+
+    if (
+      reasoning &&
+      selectedModel?.reasoning_efforts?.some((item) => item.id === reasoning)
+    ) {
+      body.reasoning_effort = reasoning;
+    }
+
+    if (isCodex && !isResume) {
+      body.workspace_mode = workspaceMode;
+    }
+
     setSubmitting(true);
     setSubmitError(null);
 
     try {
+      if (isCodex) {
+        if (hubUrl === null) {
+          throw new HubAuthError();
+        }
+
+        await saveCreationDraft({ hubUrl, draft });
+        body.request_id = await getCreationRequestId({
+          hubUrl,
+          hostId: cleanHostId,
+          payload: body,
+        });
+      }
+
       const response = await createHubSession(body);
       const { hostId: createdHost, localId } = sessionPath(response.id);
+
+      draftCleared.current = true;
+
+      if (hubUrl !== null) {
+        await Promise.all([
+          clearCreationDraft(hubUrl),
+          clearCreationIntent({ hubUrl, hostId: cleanHostId }),
+        ]).catch(() => {
+          console.warn('Could not clear the confirmed session draft.');
+        });
+      }
 
       router.replace({
         pathname: '/sessions/[host]/[local]',
@@ -305,12 +729,8 @@ export default function NewSession() {
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={headerHeight}
-        style={styles.keyboard}
-      >
-        {hostsLoading ? (
+      <View style={styles.container}>
+        {hostsLoading || !draftReady ? (
           <View style={styles.centerState}>
             <ActivityIndicator />
           </View>
@@ -324,10 +744,15 @@ export default function NewSession() {
           </View>
         ) : (
           <ScrollView
+            automaticallyAdjustKeyboardInsets
             contentContainerStyle={styles.content}
             keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
           >
+            {draftError ? (
+              <Text style={styles.errorText}>{draftError}</Text>
+            ) : null}
+
             <SelectField
               label="Host"
               onChange={setSelectedHost}
@@ -338,42 +763,186 @@ export default function NewSession() {
 
             {selectedHost === undefined ? null : (
               <>
-                {rawRepoMode ? (
-                  <TextField
-                    autoCapitalize="none"
-                    label="Repo path"
-                    onChangeText={setRawRepo}
-                    placeholder="/abs/path/to/repo"
-                    value={rawRepo}
-                  />
-                ) : (
-                  <SelectField
-                    label="Repo"
-                    onChange={setSelectedRepo}
-                    options={repoOptions}
-                    placeholder="Select a repo"
-                    value={repoId}
-                  />
-                )}
-
-                {repos.length > 0 ? (
-                  <View style={styles.toggleRow}>
-                    <View style={styles.toggleCopy}>
-                      <Text style={styles.toggleLabel}>Raw path</Text>
-                      <Text style={styles.toggleDetail}>
-                        Use a path instead of a registered repo
-                      </Text>
-                    </View>
-                    <Switch onValueChange={setUseRawRepo} value={useRawRepo} />
-                  </View>
-                ) : null}
-
                 <SelectField
                   label="Agent"
-                  onChange={setAgent}
+                  onChange={setSelectedAgent}
                   options={agentOptions}
                   value={agent}
                 />
+                {isCodex ? (
+                  <View style={styles.field}>
+                    <TextField
+                      label="Find a conversation"
+                      value={conversationSearch}
+                      onChangeText={setConversationSearch}
+                      placeholder="Search prior conversations"
+                    />
+                    <SelectField
+                      label="Conversation"
+                      value={nativeThreadId}
+                      onChange={setNativeThreadId}
+                      options={[
+                        { value: '', label: 'New conversation' },
+                        ...(nativeThreadId && !selectedConversation
+                          ? [
+                              {
+                                value: nativeThreadId,
+                                label: 'Saved conversation',
+                                detail: nativeThreadId,
+                              },
+                            ]
+                          : []),
+                        ...conversations.map((item) => ({
+                          value: item.thread_id,
+                          label:
+                            item.name ||
+                            item.preview ||
+                            'Untitled conversation',
+                          detail: `${item.cwd} · ${item.status}`,
+                        })),
+                      ]}
+                    />
+                    {conversationsLoading ? (
+                      <Text style={styles.helperText}>
+                        Loading conversations…
+                      </Text>
+                    ) : conversationsError ? (
+                      <Text style={styles.errorText}>{conversationsError}</Text>
+                    ) : conversations.length === 0 ? (
+                      <Text style={styles.helperText}>
+                        No prior conversations found.
+                      </Text>
+                    ) : null}
+                    {conversationCursor ? (
+                      <Pressable
+                        disabled={conversationsLoading}
+                        onPress={() => {
+                          void loadMoreConversations();
+                        }}
+                        style={styles.select}
+                      >
+                        <Text>Load more conversations</Text>
+                      </Pressable>
+                    ) : null}
+                    {isResume ? (
+                      <Text style={styles.helperText}>
+                        Codex will use the original working folder.
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+                {!isResume ? (
+                  <>
+                    {rawRepoMode ? (
+                      <TextField
+                        autoCapitalize="none"
+                        label="Repo path"
+                        onChangeText={setRawRepo}
+                        placeholder="/abs/path/to/repo"
+                        value={rawRepo}
+                      />
+                    ) : (
+                      <SelectField
+                        label="Repo"
+                        onChange={setSelectedRepo}
+                        options={repoOptions}
+                        placeholder="Select a repo"
+                        value={repoId}
+                      />
+                    )}
+
+                    {repos.length > 0 ? (
+                      <View style={styles.toggleRow}>
+                        <View style={styles.toggleCopy}>
+                          <Text style={styles.toggleLabel}>Raw path</Text>
+                          <Text style={styles.toggleDetail}>
+                            Use a path instead of a registered repo
+                          </Text>
+                        </View>
+                        <Switch
+                          onValueChange={setUseRawRepo}
+                          value={useRawRepo}
+                        />
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {agent ? (
+                  <View style={styles.field}>
+                    <SelectField
+                      label="Model"
+                      value={model}
+                      onChange={(value) => {
+                        setModel(value);
+                        setReasoning('');
+                      }}
+                      options={[
+                        { value: '', label: 'Host default' },
+                        ...(catalog?.status === 'ready'
+                          ? catalog.models
+                          : []
+                        ).map((item) => ({
+                          value: item.id,
+                          label: item.label,
+                          detail: item.description,
+                        })),
+                      ]}
+                    />
+                    {catalogLoading ? (
+                      <Text style={styles.helperText}>Loading models…</Text>
+                    ) : catalogError ? (
+                      <Text style={styles.errorText}>{catalogError}</Text>
+                    ) : catalog?.status !== 'ready' ? (
+                      <Text style={styles.helperText}>
+                        {catalog?.message || 'Uses the host default.'}
+                      </Text>
+                    ) : catalog.models.length === 0 ? (
+                      <Text style={styles.helperText}>
+                        No model choices are available. Uses the host default.
+                      </Text>
+                    ) : null}
+                    {selectedModel?.reasoning_efforts?.length ? (
+                      <SelectField
+                        label="Reasoning"
+                        value={reasoning}
+                        onChange={setReasoning}
+                        options={[
+                          { value: '', label: 'Host default' },
+                          ...selectedModel.reasoning_efforts.map((item) => ({
+                            value: item.id,
+                            label: item.id,
+                            detail: item.description,
+                          })),
+                        ]}
+                      />
+                    ) : null}
+                  </View>
+                ) : null}
+                {isCodex ? (
+                  <>
+                    <CodexSettingsSummary
+                      hostId={hostId}
+                      onSettings={setHostSettings}
+                      cwd={workingCwd}
+                    />
+                    <SelectField
+                      label="Permissions"
+                      value={permissionProfile}
+                      onChange={setPermissionProfile}
+                      options={[
+                        { value: '', label: 'Host default' },
+                        ...(hostSettings?.permission_profiles.profiles ?? [])
+                          .filter((profile) => profile.allowed)
+                          .map((profile) => ({
+                            value: profile.id,
+                            label: profile.id,
+                            detail: profile.description,
+                          })),
+                      ]}
+                    />
+                  </>
+                ) : null}
 
                 {agent === 'claude-cli' ? (
                   <SelectField
@@ -384,50 +953,79 @@ export default function NewSession() {
                   />
                 ) : null}
 
-                <TextField
-                  autoCapitalize="none"
-                  label="cwd"
-                  onChangeText={setCwd}
-                  placeholder="subdir/within/repo"
-                  value={cwd}
-                />
-
-                <TextField
-                  autoCapitalize="none"
-                  label="branch"
-                  onChangeText={setBranch}
-                  value={branch}
-                />
-
-                <View style={styles.field}>
-                  <Text style={styles.label}>base_ref</Text>
-                  <View style={styles.refRow}>
-                    <TextInput
+                {!isResume ? (
+                  <>
+                    {isCodex ? (
+                      <SelectField
+                        label="Working folder"
+                        value={workspaceMode}
+                        onChange={setWorkspaceMode}
+                        options={[
+                          {
+                            value: 'existing',
+                            label: 'Use the existing folder',
+                            detail: 'Keep its current branch and files.',
+                          },
+                          {
+                            value: 'isolated',
+                            label: 'Create an isolated worktree',
+                            detail: 'Use a separate branch and working folder.',
+                          },
+                        ]}
+                      />
+                    ) : null}
+                    <TextField
                       autoCapitalize="none"
-                      onChangeText={setBaseRef}
-                      placeholder="branch, tag, or SHA"
-                      style={[styles.input, styles.refInput]}
-                      value={baseRef}
+                      label="Subfolder"
+                      onChangeText={setCwd}
+                      placeholder="subdir/within/repo"
+                      value={cwd}
                     />
-                    <SelectField
-                      compact
-                      disabled={refOptions.length === 0}
-                      label="Ref"
-                      onChange={setBaseRef}
-                      options={refOptions}
-                      placeholder="Refs"
-                      value={baseRef}
-                    />
-                  </View>
-                  {refsLoading ? (
-                    <Text style={styles.helperText}>Loading refs...</Text>
-                  ) : refsError !== null ? (
-                    <Text style={styles.errorText}>{refsError}</Text>
-                  ) : null}
-                </View>
+
+                    {!isCodex || workspaceMode === 'isolated' ? (
+                      <>
+                        <TextField
+                          autoCapitalize="none"
+                          label="Branch"
+                          onChangeText={setBranch}
+                          value={branch}
+                        />
+
+                        <View style={styles.field}>
+                          <Text style={styles.label}>Base reference</Text>
+                          <View style={styles.refRow}>
+                            <TextInput
+                              autoCapitalize="none"
+                              onChangeText={setBaseRef}
+                              placeholder="branch, tag, or SHA"
+                              style={[styles.input, styles.refInput]}
+                              value={baseRef}
+                            />
+                            <SelectField
+                              compact
+                              disabled={refOptions.length === 0}
+                              label="Ref"
+                              onChange={setBaseRef}
+                              options={refOptions}
+                              placeholder="Refs"
+                              value={baseRef}
+                            />
+                          </View>
+                          {refsLoading ? (
+                            <Text style={styles.helperText}>
+                              Loading refs...
+                            </Text>
+                          ) : refsError !== null ? (
+                            <Text style={styles.errorText}>{refsError}</Text>
+                          ) : null}
+                        </View>
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
 
                 <TextField
-                  label="prompt"
+                  label="Message"
                   multiline
                   onChangeText={setPrompt}
                   value={prompt}
@@ -454,7 +1052,9 @@ export default function NewSession() {
                   ) : (
                     <>
                       <Ionicons color="#ffffff" name="play" size={18} />
-                      <Text style={styles.submitButtonText}>Start session</Text>
+                      <Text style={styles.submitButtonText}>
+                        {isResume ? 'Resume conversation' : 'Start session'}
+                      </Text>
                     </>
                   )}
                 </Pressable>
@@ -462,7 +1062,7 @@ export default function NewSession() {
             )}
           </ScrollView>
         )}
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -608,7 +1208,7 @@ const toErrorMessage = (error: unknown, fallback: string): string => {
       return 'Could not reach hub';
     }
 
-    return `Hub returned HTTP ${error.status}`;
+    return error.message;
   }
 
   return fallback;
@@ -619,31 +1219,38 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f7f9fb',
   },
-  keyboard: {
+
+  container: {
     flex: 1,
   },
+
   centerState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
+
   content: {
     gap: 16,
     padding: 20,
     paddingBottom: 36,
   },
+
   field: {
     gap: 7,
   },
+
   compactField: {
     width: 98,
   },
+
   label: {
     color: '#2f3a43',
     fontSize: 14,
     fontWeight: '700',
   },
+
   input: {
     minHeight: 44,
     borderColor: '#cdd6df',
@@ -655,10 +1262,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+
   textArea: {
     minHeight: 104,
     lineHeight: 21,
   },
+
   select: {
     minHeight: 44,
     flexDirection: 'row',
@@ -671,6 +1280,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     paddingHorizontal: 12,
   },
+
   compactSelect: {
     minHeight: 44,
     flexDirection: 'row',
@@ -683,25 +1293,31 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     paddingHorizontal: 10,
   },
+
   disabledSelect: {
     opacity: 0.45,
   },
+
   selectText: {
     flex: 1,
     color: '#101820',
     fontSize: 15,
   },
+
   compactSelectText: {
     color: '#2f3a43',
     fontSize: 14,
     fontWeight: '700',
   },
+
   placeholderText: {
     color: '#8a96a3',
   },
+
   pressed: {
     opacity: 0.75,
   },
+
   toggleRow: {
     minHeight: 56,
     flexDirection: 'row',
@@ -715,44 +1331,53 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+
   toggleCopy: {
     flex: 1,
     gap: 3,
   },
+
   toggleLabel: {
     color: '#101820',
     fontSize: 14,
     fontWeight: '700',
   },
+
   toggleDetail: {
     color: '#5c6873',
     fontSize: 13,
     lineHeight: 18,
   },
+
   refRow: {
     flexDirection: 'row',
     gap: 8,
   },
+
   refInput: {
     flex: 1,
   },
+
   helperText: {
     color: '#5c6873',
     fontSize: 13,
     lineHeight: 18,
   },
+
   errorText: {
     color: '#b42318',
     fontSize: 14,
     lineHeight: 20,
     textAlign: 'center',
   },
+
   emptyText: {
     color: '#5c6873',
     fontSize: 15,
     lineHeight: 21,
     textAlign: 'center',
   },
+
   errorBanner: {
     borderColor: '#f3bfbb',
     borderRadius: 8,
@@ -761,11 +1386,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
+
   errorBannerText: {
     color: '#b42318',
     fontSize: 13,
     lineHeight: 18,
   },
+
   submitButton: {
     minHeight: 46,
     flexDirection: 'row',
@@ -776,16 +1403,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#1769aa',
     paddingHorizontal: 14,
   },
+
   submitButtonText: {
     color: '#ffffff',
     fontSize: 15,
     fontWeight: '700',
   },
+
   modalBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(16, 24, 32, 0.38)',
   },
+
   modalCard: {
     maxHeight: '76%',
     borderTopLeftRadius: 12,
@@ -793,6 +1423,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     paddingBottom: 24,
   },
+
   modalHeader: {
     minHeight: 56,
     flexDirection: 'row',
@@ -802,20 +1433,24 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     paddingHorizontal: 18,
   },
+
   modalTitle: {
     color: '#101820',
     fontSize: 17,
     fontWeight: '700',
   },
+
   modalClose: {
     width: 36,
     height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
+
   modalList: {
     maxHeight: 420,
   },
+
   optionRow: {
     minHeight: 54,
     flexDirection: 'row',
@@ -827,18 +1462,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 10,
   },
+
   selectedOption: {
     backgroundColor: '#eef6fc',
   },
+
   optionCopy: {
     flex: 1,
     gap: 3,
   },
+
   optionLabel: {
     color: '#101820',
     fontSize: 15,
     fontWeight: '600',
   },
+
   optionDetail: {
     color: '#5c6873',
     fontSize: 13,

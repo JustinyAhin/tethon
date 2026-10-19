@@ -85,10 +85,12 @@ bunx eas-cli update --branch preview --auto --environment preview --non-interact
 
 The app belongs to the Expo project `@segbedji/tethon`.
 Its [EAS configuration](../mobile/eas.json) defines the internal `preview` profile.
-For an authorized native preview build, run from `mobile/` with an authenticated EAS CLI:
+Run EAS commands from `mobile/`. The repository root is not the app directory.
+For an authorized native preview build, start at the repository root:
 
 ```sh
-eas build --profile preview --platform ios
+cd mobile
+bunx eas-cli build --profile preview --platform ios
 ```
 
 Install the resulting build on the phone.

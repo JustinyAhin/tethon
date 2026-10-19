@@ -35,6 +35,12 @@ type Adapter interface {
 	Start(context.Context, StartRequest, Sink) (RunningSession, error)
 }
 
+// ModelLister is optional. Implementations fetch models from a provider-owned
+// source and return an error when that source cannot be read.
+type ModelLister interface {
+	ListModels(context.Context) (protocol.ModelCatalog, error)
+}
+
 type RunningSession interface {
 	Input(context.Context, string) ([]protocol.Event, error)
 	ResolveApproval(context.Context, string, string, string) ([]protocol.Event, error)

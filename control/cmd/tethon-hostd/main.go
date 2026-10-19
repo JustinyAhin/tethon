@@ -128,24 +128,50 @@ func run() error {
 		return err
 	}
 	defer store.Close()
-	agentRegistry := agent.NewRegistry(agent.NewFake())
+
+	adapters := []agent.Adapter{agent.NewFake()}
+	agentStatus := map[string]protocol.AgentAvailability{
+		"codex-cli": {
+			Available: false,
+			Reason:    "Codex CLI is not installed on the host",
+		},
+	}
+
 	if _, err := exec.LookPath("claude"); err == nil {
-		agentRegistry = agent.NewRegistry(agent.NewFake(), agent.NewClaude(agent.ClaudeConfig{
+		adapters = append(adapters, agent.NewClaude(agent.ClaudeConfig{
 			AllowAnthropicAPIKey: *allowAnthropicAPIKey,
 			Logger:               logger,
 			ExtraEnv:             cacheEnv(cRoot),
 		}))
 	}
+
+	if _, err := exec.LookPath("codex"); err == nil {
+		native := agent.NewCodex(agent.CodexConfig{StartDaemon: true, Experimental: true})
+		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err := native.Check(checkCtx)
+		cancel()
+
+		if err != nil {
+			logger.Warn("codex_unavailable", "reason", err.Error())
+			agentStatus["codex-cli"] = protocol.AgentAvailability{Reason: err.Error()}
+		} else {
+			adapters = append(adapters, native)
+			agentStatus["codex-cli"] = protocol.AgentAvailability{Available: true}
+		}
+	}
+
+	agentRegistry := agent.NewRegistry(adapters...)
 	logger.Info("hostd_state_paths", "host_id", *hostID, "db", *dbPath, "worktree_root", wtRoot, "cache_root", cRoot)
 
 	hostURL := "http://" + *addr
 	registerReq := protocol.RegisterHostRequest{
-		HostID:    *hostID,
-		Name:      *name,
-		URL:       hostURL,
-		Agents:    agentRegistry.Names(),
-		RepoRoots: registry.Paths(),
-		Repos:     repoInfos(registry),
+		HostID:      *hostID,
+		Name:        *name,
+		URL:         hostURL,
+		Agents:      agentRegistry.Names(),
+		AgentStatus: agentStatus,
+		RepoRoots:   registry.Paths(),
+		Repos:       repoInfos(registry),
 	}
 	hub := newHubClient(*hubURL, *hubAuthToken, &http.Client{Timeout: *hubRequestTimeout})
 	status := newHostStatus(hostStatusConfig{
@@ -165,7 +191,7 @@ func run() error {
 		RepoRoots:     registry.Paths(),
 		RepoRefresher: repoRefresher,
 		ApprovalNotifier: func(ctx context.Context, n server.ApprovalNotification) error {
-			return hub.notifyApproval(ctx, *hostID, protocol.PushApprovalTestRequest{
+			req := protocol.PushApprovalTestRequest{
 				HostID:    *hostID,
 				SessionID: n.SessionID,
 				RequestID: n.RequestID,
@@ -173,7 +199,19 @@ func run() error {
 				Repo:      n.Repo,
 				ToolName:  n.ToolName,
 				Command:   n.Command,
-			})
+			}
+
+			if n.NativeRequest != nil {
+				req.NativeRequestKey = n.NativeRequest.RequestKey
+				req.NativeConnectionID = n.NativeRequest.ConnectionID
+				req.NativeMethod = n.NativeRequest.Method
+			}
+
+			return hub.notifyApproval(ctx, *hostID, req)
+		},
+		ApprovalResolvedNotifier: func(ctx context.Context, n protocol.PushApprovalResolvedRequest) error {
+			n.HostID = *hostID
+			return hub.postJSON(ctx, hub.baseURL+"/hosts/"+url.PathEscape(*hostID)+"/notify/approval-resolved", n)
 		},
 		Logger: logger,
 	})

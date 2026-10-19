@@ -156,12 +156,13 @@ func (s *ExpoPushSender) sendChunk(ctx context.Context, devices []ExpoDevice, me
 }
 
 type expoPushMessage struct {
-	To         string         `json:"to"`
-	Title      string         `json:"title"`
-	Body       string         `json:"body"`
-	Data       map[string]any `json:"data,omitempty"`
-	CategoryID string         `json:"categoryId,omitempty"`
-	ChannelID  string         `json:"channelId,omitempty"`
+	To               string         `json:"to"`
+	Title            string         `json:"title,omitempty"`
+	Body             string         `json:"body,omitempty"`
+	Data             map[string]any `json:"data,omitempty"`
+	CategoryID       string         `json:"categoryId,omitempty"`
+	ChannelID        string         `json:"channelId,omitempty"`
+	ContentAvailable bool           `json:"_contentAvailable,omitempty"`
 }
 
 type expoPushResponse struct {
@@ -229,13 +230,23 @@ func approvalPushMessage(token string, req protocol.PushApprovalTestRequest) exp
 			data["command_truncated"] = true
 		}
 	}
+	category := approvalNotificationCategoryID
+	title := "Approval needed"
+	if req.NativeConnectionID != "" && req.NativeRequestKey != "" {
+		data["request_key"] = req.NativeRequestKey
+		data["connection_id"] = req.NativeConnectionID
+		data["native_method"] = req.NativeMethod
+		category = ""
+		title = "Codex needs input"
+		body = "Open this conversation to answer the native request"
+	}
 
 	return expoPushMessage{
 		To:         token,
-		Title:      "Approval needed",
+		Title:      title,
 		Body:       body,
 		Data:       data,
-		CategoryID: approvalNotificationCategoryID,
+		CategoryID: category,
 		ChannelID:  approvalNotificationChannelID,
 	}
 }

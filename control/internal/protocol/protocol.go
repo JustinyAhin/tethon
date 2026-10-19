@@ -26,38 +26,42 @@ type Event struct {
 }
 
 type Session struct {
-	ID           string    `json:"id"`
-	RepoID       string    `json:"repo_id,omitempty"`
-	Repo         string    `json:"repo"`
-	CWD          string    `json:"cwd"`
-	Branch       string    `json:"branch"`
-	BaseRef      string    `json:"base_ref,omitempty"`
-	WorktreePath string    `json:"worktree_path,omitempty"`
-	Agent        string    `json:"agent"`
-	Backend      string    `json:"backend,omitempty"`
-	CLI          string    `json:"cli,omitempty"`
-	Model        string    `json:"model,omitempty"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             string             `json:"id"`
+	RepoID         string             `json:"repo_id,omitempty"`
+	Repo           string             `json:"repo"`
+	CWD            string             `json:"cwd"`
+	Branch         string             `json:"branch"`
+	BaseRef        string             `json:"base_ref,omitempty"`
+	WorktreePath   string             `json:"worktree_path,omitempty"`
+	Agent          string             `json:"agent"`
+	Backend        string             `json:"backend,omitempty"`
+	CLI            string             `json:"cli,omitempty"`
+	Model          string             `json:"model,omitempty"`           // Provider-observed runtime model.
+	RequestedModel string             `json:"requested_model,omitempty"` // User choice. Empty preserves the agent default.
+	Status         string             `json:"status"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	Codex          *CodexSessionState `json:"codex,omitempty"`
 }
 
 type SessionSummary struct {
-	ID        string    `json:"id"`
-	HostID    string    `json:"host_id,omitempty"`
-	RepoID    string    `json:"repo_id,omitempty"`
-	Repo      string    `json:"repo"`
-	CWD       string    `json:"cwd"`
-	Branch    string    `json:"branch"`
-	BaseRef   string    `json:"base_ref,omitempty"`
-	Agent     string    `json:"agent"`
-	Backend   string    `json:"backend,omitempty"`
-	CLI       string    `json:"cli,omitempty"`
-	Model     string    `json:"model,omitempty"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	LastSeq   int64     `json:"last_seq"`
+	ID             string             `json:"id"`
+	HostID         string             `json:"host_id,omitempty"`
+	RepoID         string             `json:"repo_id,omitempty"`
+	Repo           string             `json:"repo"`
+	CWD            string             `json:"cwd"`
+	Branch         string             `json:"branch"`
+	BaseRef        string             `json:"base_ref,omitempty"`
+	Agent          string             `json:"agent"`
+	Backend        string             `json:"backend,omitempty"`
+	CLI            string             `json:"cli,omitempty"`
+	Model          string             `json:"model,omitempty"`
+	RequestedModel string             `json:"requested_model,omitempty"`
+	Status         string             `json:"status"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	LastSeq        int64              `json:"last_seq"`
+	Codex          *CodexSessionState `json:"codex,omitempty"`
 }
 
 type ListSessionsResponse struct {
@@ -69,15 +73,52 @@ type ListHostsResponse struct {
 }
 
 type CreateSessionRequest struct {
-	HostID         string `json:"host_id,omitempty"`
-	RepoID         string `json:"repo_id,omitempty"`
-	Repo           string `json:"repo,omitempty"`
-	CWD            string `json:"cwd"`
-	Branch         string `json:"branch"`
-	BaseRef        string `json:"base_ref,omitempty"`
-	Agent          string `json:"agent"`
-	Prompt         string `json:"prompt,omitempty"`
-	PermissionMode string `json:"permission_mode,omitempty"`
+	RequestID              string `json:"request_id,omitempty"`
+	HostID                 string `json:"host_id,omitempty"`
+	RepoID                 string `json:"repo_id,omitempty"`
+	Repo                   string `json:"repo,omitempty"`
+	CWD                    string `json:"cwd"`
+	Branch                 string `json:"branch"`
+	BaseRef                string `json:"base_ref,omitempty"`
+	Agent                  string `json:"agent"`
+	Prompt                 string `json:"prompt,omitempty"`
+	PermissionMode         string `json:"permission_mode,omitempty"`
+	RequestedModel         string `json:"requested_model,omitempty"`
+	NativeThreadID         string `json:"native_thread_id,omitempty"`
+	WorkspaceMode          string `json:"workspace_mode,omitempty"`
+	ReasoningEffort        string `json:"reasoning_effort,omitempty"`
+	CodexPermissionProfile string `json:"codex_permission_profile,omitempty"`
+}
+
+const (
+	ModelCatalogReady       = "ready"
+	ModelCatalogUnavailable = "unavailable"
+)
+
+// ModelCatalog contains choices from the selected agent's provider-owned source.
+// An unavailable catalog permits the agent default, but no explicit selection.
+type ModelCatalog struct {
+	Agent   string      `json:"agent"`
+	Status  string      `json:"status"`
+	Source  string      `json:"source,omitempty"`
+	Message string      `json:"message,omitempty"`
+	Models  []ModelInfo `json:"models"`
+}
+
+type ModelInfo struct {
+	ID                     string                 `json:"id"`
+	Label                  string                 `json:"label"`
+	Provider               string                 `json:"provider"`
+	Description            string                 `json:"description,omitempty"`
+	IsDefault              bool                   `json:"is_default,omitempty"`
+	ReasoningEfforts       []ModelReasoningEffort `json:"reasoning_efforts,omitempty"`
+	DefaultReasoningEffort string                 `json:"default_reasoning_effort,omitempty"`
+	InputModalities        []string               `json:"input_modalities,omitempty"`
+}
+
+type ModelReasoningEffort struct {
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
 }
 
 type SessionStartedPayload = CreateSessionRequest
@@ -125,13 +166,22 @@ type PushTestRequest struct {
 }
 
 type PushApprovalTestRequest struct {
+	NativeRequestKey   string `json:"native_request_key,omitempty"`
+	NativeConnectionID string `json:"native_connection_id,omitempty"`
+	NativeMethod       string `json:"native_method,omitempty"`
+	HostID             string `json:"host_id"`
+	SessionID          string `json:"session_id"`
+	RequestID          string `json:"request_id"`
+	Agent              string `json:"agent,omitempty"`
+	Repo               string `json:"repo,omitempty"`
+	ToolName           string `json:"tool_name,omitempty"`
+	Command            string `json:"command,omitempty"`
+}
+
+type PushApprovalResolvedRequest struct {
 	HostID    string `json:"host_id"`
 	SessionID string `json:"session_id"`
 	RequestID string `json:"request_id"`
-	Agent     string `json:"agent,omitempty"`
-	Repo      string `json:"repo,omitempty"`
-	ToolName  string `json:"tool_name,omitempty"`
-	Command   string `json:"command,omitempty"`
 }
 
 type PushTestResponse struct {
@@ -148,28 +198,45 @@ type PushTestRejection struct {
 	Message  string `json:"message,omitempty"`
 }
 
+type AgentAvailability struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 type RegisterHostRequest struct {
-	HostID    string     `json:"host_id"`
-	Name      string     `json:"name"`
-	URL       string     `json:"url"`
-	Agents    []string   `json:"agents"`
-	RepoRoots []string   `json:"repo_roots"`
-	Repos     []RepoInfo `json:"repos,omitempty"`
+	AgentStatus map[string]AgentAvailability `json:"agent_status,omitempty"`
+	HostID      string                       `json:"host_id"`
+	Name        string                       `json:"name"`
+	URL         string                       `json:"url"`
+	Agents      []string                     `json:"agents"`
+	RepoRoots   []string                     `json:"repo_roots"`
+	Repos       []RepoInfo                   `json:"repos,omitempty"`
 }
 
 type HostSummary struct {
-	HostID    string     `json:"host_id"`
-	Name      string     `json:"name"`
-	URL       string     `json:"url"`
-	Agents    []string   `json:"agents"`
-	RepoRoots []string   `json:"repo_roots"`
-	Repos     []RepoInfo `json:"repos,omitempty"`
-	LastSeen  time.Time  `json:"last_seen"`
-	Online    bool       `json:"online"`
+	AgentStatus map[string]AgentAvailability `json:"agent_status,omitempty"`
+	HostID      string                       `json:"host_id"`
+	Name        string                       `json:"name"`
+	URL         string                       `json:"url"`
+	Agents      []string                     `json:"agents"`
+	RepoRoots   []string                     `json:"repo_roots"`
+	Repos       []RepoInfo                   `json:"repos,omitempty"`
+	LastSeen    time.Time                    `json:"last_seen"`
+	Online      bool                         `json:"online"`
 }
 
 type InputRequest struct {
-	Text string `json:"text"`
+	Text                   string `json:"text"`
+	Mode                   string `json:"mode,omitempty" enum:"start,steer,queue"`
+	TurnID                 string `json:"turn_id,omitempty"`
+	RequestID              string `json:"request_id,omitempty"` // Client idempotency key. Independent of native request IDs.
+	RequestedModel         string `json:"requested_model,omitempty"`
+	ReasoningEffort        string `json:"reasoning_effort,omitempty"`
+	CodexPermissionProfile string `json:"codex_permission_profile,omitempty"`
+}
+
+type StopRequest struct {
+	TurnID string `json:"turn_id,omitempty"`
 }
 
 type ResolveApprovalRequest struct {

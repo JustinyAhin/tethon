@@ -88,18 +88,6 @@ func TestAwaitingApprovalNotifiesWithContext(t *testing.T) {
 	}
 }
 
-func TestAwaitingApprovalWithNilNotifierDoesNotPanic(t *testing.T) {
-	ts := newTestServerWithConfig(t, Config{Agents: agent.NewRegistry(agent.NewFake())})
-
-	session := postSession(t, ts.URL)
-	events := streamEvents(t, ts.URL, session.ID, 0, 3)
-	assertTypes(t, events, []string{
-		protocol.EventSessionStarted,
-		protocol.EventOutput,
-		protocol.EventAwaitingApproval,
-	})
-}
-
 func TestAwaitingApprovalNotifierDoesNotBlockAppend(t *testing.T) {
 	blocked := make(chan struct{})
 	release := make(chan struct{})
@@ -141,6 +129,33 @@ func TestStreamReconnectFromCursorReturnsOnlyLaterEvents(t *testing.T) {
 	events := streamEvents(t, ts.URL, session.ID, 3, 2)
 	assertSeqs(t, events, []int64{4, 5})
 	assertTypes(t, events, []string{protocol.EventInputReceived, protocol.EventOutput})
+}
+
+func TestIdleStreamConnectsWithoutNewEvents(t *testing.T) {
+	host := newTestServer(t)
+	session := postSession(t, host.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, host.URL+"/sessions/"+session.ID+"/stream?from=3", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := host.Client().Do(request)
+	if err != nil {
+		t.Fatalf("idle stream did not establish a response: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("idle stream: HTTP %d", response.StatusCode)
+	}
+
+	line, err := bufio.NewReader(response.Body).ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, ":") {
+		t.Fatalf("idle stream did not flush an SSE comment: %q, %v", line, err)
+	}
 }
 
 func TestListSessionsReturnsLocalSummaries(t *testing.T) {

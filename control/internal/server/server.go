@@ -26,43 +26,48 @@ const defaultResourceSnapshotTimeout = 2 * time.Second
 const approvalNotificationTimeout = 5 * time.Second
 
 type ApprovalNotification struct {
-	SessionID string
-	RequestID string
-	Agent     string
-	Repo      string
-	ToolName  string
-	Command   string
+	SessionID     string
+	RequestID     string
+	Agent         string
+	Repo          string
+	ToolName      string
+	Command       string
+	NativeRequest *protocol.CodexRequestPayload
 }
 
 type ApprovalNotifier func(context.Context, ApprovalNotification) error
 type RepoRefresher func(context.Context, repo.Repo) error
 
 type Server struct {
-	store            *sessionlog.Store
-	broker           *broker
-	agents           *agent.Registry
-	repos            *repo.Registry
-	worktrees        *worktree.Manager
-	repoRefresher    RepoRefresher
-	repoRoots        []string
-	resources        resource.Collector
-	resourceTimeout  time.Duration
-	approvalNotifier ApprovalNotifier
-	logger           *slog.Logger
-	running          map[string]agent.RunningSession
-	runningM         sync.RWMutex
+	store                    *sessionlog.Store
+	broker                   *broker
+	agents                   *agent.Registry
+	repos                    *repo.Registry
+	worktrees                *worktree.Manager
+	repoRefresher            RepoRefresher
+	repoRoots                []string
+	resources                resource.Collector
+	resourceTimeout          time.Duration
+	approvalNotifier         ApprovalNotifier
+	approvalResolvedNotifier func(context.Context, protocol.PushApprovalResolvedRequest) error
+	logger                   *slog.Logger
+	running                  map[string]agent.RunningSession
+	runningM                 sync.RWMutex
+	nativeCreateMu           sync.Mutex
+	nativeLifecycleMu        sync.Mutex
 }
 
 type Config struct {
-	Agents            *agent.Registry
-	Repos             *repo.Registry
-	Worktrees         *worktree.Manager
-	RepoRoots         []string
-	RepoRefresher     RepoRefresher
-	ResourceCollector resource.Collector
-	ResourceTimeout   time.Duration
-	ApprovalNotifier  ApprovalNotifier
-	Logger            *slog.Logger
+	Agents                   *agent.Registry
+	Repos                    *repo.Registry
+	Worktrees                *worktree.Manager
+	RepoRoots                []string
+	RepoRefresher            RepoRefresher
+	ResourceCollector        resource.Collector
+	ResourceTimeout          time.Duration
+	ApprovalNotifier         ApprovalNotifier
+	ApprovalResolvedNotifier func(context.Context, protocol.PushApprovalResolvedRequest) error
+	Logger                   *slog.Logger
 }
 
 func New(store *sessionlog.Store) *Server {
@@ -105,18 +110,19 @@ func NewWithConfig(store *sessionlog.Store, config Config) *Server {
 		repoRoots = append(repoRoots, filepath.Clean(realPath))
 	}
 	return &Server{
-		store:            store,
-		broker:           newBroker(),
-		agents:           agents,
-		repos:            config.Repos,
-		worktrees:        config.Worktrees,
-		repoRefresher:    config.RepoRefresher,
-		repoRoots:        repoRoots,
-		resources:        resources,
-		resourceTimeout:  resourceTimeout,
-		approvalNotifier: config.ApprovalNotifier,
-		logger:           logger,
-		running:          make(map[string]agent.RunningSession),
+		store:                    store,
+		broker:                   newBroker(),
+		agents:                   agents,
+		repos:                    config.Repos,
+		worktrees:                config.Worktrees,
+		repoRefresher:            config.RepoRefresher,
+		repoRoots:                repoRoots,
+		resources:                resources,
+		resourceTimeout:          resourceTimeout,
+		approvalNotifier:         config.ApprovalNotifier,
+		approvalResolvedNotifier: config.ApprovalResolvedNotifier,
+		logger:                   logger,
+		running:                  make(map[string]agent.RunningSession),
 	}
 }
 
@@ -126,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/sessions/", s.handleSession)
 	mux.HandleFunc("/resources/sessions", s.handleSessionResources)
 	mux.HandleFunc("/repos/", s.handleRepo)
+	mux.HandleFunc("/agents/", s.handleAgentModels)
 	return mux
 }
 
@@ -258,16 +265,75 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.Agent == "" {
 		req.Agent = "fake"
 	}
+
 	adapter, ok := s.agents.Get(req.Agent)
 	if !ok {
 		s.logger.Warn("session_create_rejected", "agent", req.Agent, "repo_id", req.RepoID, "repo", req.Repo, "cwd", req.CWD, "reason", "unknown agent")
 		writeError(w, http.StatusBadRequest, "unknown agent")
 		return
 	}
+
+	var createRequestID, createFingerprint string
+	if req.Agent == "codex-cli" {
+		// A create retry must see its stored session before any native work.
+		s.nativeCreateMu.Lock()
+		defer s.nativeCreateMu.Unlock()
+
+		fingerprint, handled := s.findNativeCreate(w, r, &req)
+		if handled {
+			return
+		}
+
+		createRequestID = req.RequestID
+		createFingerprint = fingerprint
+	}
+
 	if err := normalizePermissionMode(&req); err != nil {
 		s.logger.Warn("session_create_rejected", "agent", req.Agent, "permission_mode", req.PermissionMode, "reason", err.Error())
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	req.RequestedModel = strings.TrimSpace(req.RequestedModel)
+	if status, err := validateRequestedModel(r.Context(), adapter, req.RequestedModel); err != nil {
+		writeError(w, status, err.Error())
+		return
+	}
+
+	if req.Agent == "codex-cli" {
+		if req.NativeThreadID != "" {
+			if req.Prompt == "" && (req.RequestedModel != "" || req.ReasoningEffort != "" || req.CodexPermissionProfile != "") {
+				writeError(w, http.StatusBadRequest, "add a prompt to apply the selected Codex settings in a new turn")
+				return
+			}
+
+			existingID, err := s.prepareCodexResume(r.Context(), &req)
+			if err != nil {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
+
+			if existingID != "" {
+				if err := s.resumeNativeIntent(r.Context(), existingID, createFingerprint, req); err != nil {
+					writeNativeError(w, err)
+					return
+				}
+
+				writeJSON(w, http.StatusOK, protocol.CreateSessionResponse{ID: existingID, Status: "running"})
+				return
+			}
+		} else if req.Prompt == "" {
+			writeError(w, http.StatusBadRequest, "a prompt is required for a new Codex conversation")
+			return
+		}
+
+		if req.WorkspaceMode == "" {
+			req.WorkspaceMode = protocol.WorkspaceExisting
+		}
+		if req.WorkspaceMode != protocol.WorkspaceExisting && req.WorkspaceMode != protocol.WorkspaceIsolated {
+			writeError(w, http.StatusBadRequest, "unsupported Codex workspace mode")
+			return
+		}
 	}
 
 	resolved, err := s.resolveRepo(req)
@@ -278,25 +344,29 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session, err := s.store.CreateSession(r.Context(), sessionlog.CreateSessionParams{
-		RepoID:  resolved.repoID,
-		Repo:    resolved.repoPath,
-		CWD:     resolved.cwd,
-		Branch:  req.Branch,
-		BaseRef: resolved.baseRef,
-		Agent:   req.Agent,
-		Backend: agentBackend(req.Agent),
-		CLI:     agentCLI(req.Agent),
-		Status:  "running",
+		CreateRequestID:   createRequestID,
+		CreateFingerprint: createFingerprint,
+		RepoID:            resolved.repoID,
+		Repo:              resolved.repoPath,
+		CWD:               resolved.cwd,
+		Branch:            req.Branch,
+		BaseRef:           resolved.baseRef,
+		Agent:             req.Agent,
+		Backend:           agentBackend(req.Agent),
+		CLI:               agentCLI(req.Agent),
+		RequestedModel:    req.RequestedModel,
+		Status:            "running",
 	})
 	if err != nil {
 		s.logger.Error("session_create_failed", "agent", req.Agent, "repo", resolved.repoPath, "cwd", resolved.cwd, "error", err.Error())
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	s.logger.Info("session_create_accepted", "session_id", session.ID, "agent", session.Agent, "repo_id", resolved.repoID, "repo", session.Repo, "cwd", session.CWD, "status", session.Status)
 
 	workDir := joinCWD(resolved.repoPath, resolved.cwd)
-	if s.worktrees != nil && resolved.repoID != "" {
+	if s.worktrees != nil && resolved.repoID != "" && (req.Agent != "codex-cli" || req.WorkspaceMode == protocol.WorkspaceIsolated) {
 		if err := s.refreshRepo(r.Context(), resolved.repoID); err != nil {
 			_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
 			_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
@@ -304,6 +374,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+
 		wt, err := s.worktrees.Create(r.Context(), worktree.CreateOptions{
 			ID:       session.ID,
 			RepoID:   resolved.repoID,
@@ -324,9 +395,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+
 		if err := s.store.SetSessionWorktree(r.Context(), session.ID, wt.Path, wt.Branch); err != nil {
 			s.logger.Error("session_worktree_persist_failed", "session_id", session.ID, "error", err.Error())
 		}
+
 		session.WorktreePath = wt.Path
 		session.Branch = wt.Branch
 		workDir = joinCWD(wt.Path, resolved.cwd)
@@ -341,11 +414,16 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	createForEvent.CWD = resolved.cwd
 	createForEvent.BaseRef = resolved.baseRef
 
-	running, err := adapter.Start(r.Context(), agent.StartRequest{Session: session, Create: createForEvent, WorkDir: workDir}, s.sink(session.ID))
+	start := agent.StartRequest{
+		Session: session,
+		Create:  createForEvent,
+		WorkDir: workDir,
+	}
+	running, err := adapter.Start(r.Context(), start, s.sink(session.ID))
 	if err != nil {
 		_ = s.store.SetSessionStatus(r.Context(), session.ID, "error")
 		_, _ = s.appendEvent(r.Context(), session.ID, protocol.EventError, protocol.ErrorPayload{Message: err.Error()})
-		if s.worktrees != nil && session.WorktreePath != "" {
+		if session.Agent != "codex-cli" && s.worktrees != nil && session.WorktreePath != "" {
 			if removeErr := s.worktrees.Remove(context.Background(), session.ID); removeErr != nil {
 				s.logger.Warn("session_worktree_cleanup_failed", "session_id", session.ID, "error", removeErr.Error())
 			}
@@ -354,6 +432,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	s.setRunning(session.ID, running)
 	// If the agent reached a terminal state before setRunning ran (a fast
 	// goroutine), reconcile now so the map does not hold a dead session.
@@ -489,6 +568,31 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := parts[0]
 
+	if len(parts) == 2 && r.Method == http.MethodPost && (parts[1] == "archive" || parts[1] == "unarchive") {
+		s.handleNativeConversationAction(w, r, sessionID, parts[1])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "conversation" && r.Method == http.MethodDelete {
+		s.handleNativeConversationAction(w, r, sessionID, "delete")
+		return
+	}
+	if len(parts) == 3 && parts[1] == "workspace" && parts[2] == "cleanup" && r.Method == http.MethodPost {
+		s.handleNativeWorkspaceCleanup(w, r, sessionID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "native" && r.Method == http.MethodGet {
+		s.handleNativeSnapshot(w, r, sessionID)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "history" && r.Method == http.MethodGet {
+		s.handleNativeHistory(w, r, sessionID)
+		return
+	}
+	if len(parts) == 3 && parts[1] == "requests" && parts[2] == "respond" && r.Method == http.MethodPost {
+		s.handleNativeResponse(w, r, sessionID)
+		return
+	}
+
 	if len(parts) == 1 && r.Method == http.MethodDelete {
 		s.handleDelete(w, r, sessionID)
 		return
@@ -566,6 +670,12 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request, sessionID 
 		writeStoreError(w, err)
 		return
 	}
+
+	if session.Agent == "codex-cli" {
+		writeError(w, http.StatusConflict, "use native history deletion and separate workspace cleanup for Codex")
+		return
+	}
+
 	if !isTerminalStatus(session.Status) {
 		s.logger.Warn("session_delete_rejected", "session_id", sessionID, "status", session.Status, "reason", "session is not terminal")
 		writeError(w, http.StatusConflict, "session must be terminal before deletion")
@@ -710,6 +820,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, sessionID 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// An idle stream must establish its response before the next native event.
+	if _, err := fmt.Fprint(w, ": connected\n\n"); err != nil {
+		return
+	}
+	flusher.Flush()
+
 	for _, event := range replay {
 		if err := writeSSE(w, event); err != nil {
 			return
@@ -759,10 +876,28 @@ func (s *Server) handleInput(w http.ResponseWriter, r *http.Request, sessionID s
 		return
 	}
 
-	events, err := running.Input(r.Context(), req.Text)
+	var events []protocol.Event
+	var err error
+	if native, ok := running.(nativeRunningSession); ok {
+		adapter, _ := s.agents.Get("codex-cli")
+		if req.RequestedModel != "" {
+			if status, err := validateRequestedModel(r.Context(), adapter, req.RequestedModel); err != nil {
+				writeError(w, status, err.Error())
+				return
+			}
+		}
+
+		events, err = native.InputNative(r.Context(), req, "")
+	} else {
+		events, err = running.Input(r.Context(), req.Text)
+	}
 	if err != nil {
 		s.logger.Warn("session_input_rejected", "session_id", sessionID, "text_len", len(req.Text), "reason", err.Error())
-		writeAgentError(w, err)
+		if _, native := running.(nativeRunningSession); native {
+			writeNativeError(w, err)
+		} else {
+			writeAgentError(w, err)
+		}
 		return
 	}
 	s.clearRunningIfTerminal(sessionID, running)
@@ -824,10 +959,27 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request, sessionID 
 		return
 	}
 
-	events, err := running.Cancel(r.Context())
+	var events []protocol.Event
+	var err error
+	if native, ok := running.(nativeRunningSession); ok {
+		var req protocol.StopRequest
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid Stop request")
+				return
+			}
+		}
+		events, err = native.StopNative(r.Context(), req.TurnID)
+	} else {
+		events, err = running.Cancel(r.Context())
+	}
 	if err != nil {
 		s.logger.Warn("session_cancel_rejected", "session_id", sessionID, "reason", err.Error())
-		writeAgentError(w, err)
+		if _, native := running.(nativeRunningSession); native {
+			writeNativeError(w, err)
+		} else {
+			writeAgentError(w, err)
+		}
 		return
 	}
 	s.clearRunningIfTerminal(sessionID, running)
@@ -843,6 +995,12 @@ func (s *Server) appendEvent(ctx context.Context, sessionID, eventType string, p
 	s.broker.publish(event)
 	if eventType == protocol.EventAwaitingApproval && s.approvalNotifier != nil {
 		s.notifyApproval(ctx, sessionID, payload)
+	}
+	if eventType == protocol.EventCodexRequest && s.approvalNotifier != nil {
+		s.notifyNativeRequest(ctx, sessionID, payload)
+	}
+	if eventType == protocol.EventApprovalResolved || eventType == protocol.EventCodexRequestResolved {
+		s.notifyApprovalResolved(sessionID, payload)
 	}
 	return event, nil
 }
@@ -969,6 +1127,9 @@ func (s *Server) clearRunning(sessionID string) {
 // Policy: done/cancelled removes the worktree and its branch; error/interrupted
 // retains them so the failed work can be inspected.
 func (s *Server) onSessionTerminal(ctx context.Context, sessionID, status string) {
+	if session, err := s.store.GetSession(ctx, sessionID); err == nil && session.Agent == "codex-cli" {
+		return
+	}
 	s.clearRunning(sessionID)
 	if s.worktrees == nil {
 		return
@@ -1011,6 +1172,14 @@ func (s *Server) Recover(ctx context.Context) error {
 				}
 			}
 		}
+
+		if session.Agent == "codex-cli" && session.Codex != nil {
+			if err := s.recoverCodexSession(ctx, session); err != nil {
+				s.logger.Warn("codex_recovery_failed", "session_id", session.ID, "error", err.Error())
+			}
+			continue
+		}
+
 		_, _ = s.appendEvent(ctx, session.ID, protocol.EventError, protocol.ErrorPayload{Message: "daemon restarted; session interrupted"})
 		if err := s.store.SetSessionStatus(ctx, session.ID, "error"); err != nil {
 			s.logger.Warn("session_recover_failed", "session_id", session.ID, "error", err.Error())
@@ -1060,6 +1229,8 @@ func agentBackend(agentName string) string {
 	switch agentName {
 	case "claude-cli":
 		return "anthropic"
+	case "codex-cli":
+		return "openai"
 	case "fake":
 		return "fake"
 	default:
@@ -1071,6 +1242,8 @@ func agentCLI(agentName string) string {
 	switch agentName {
 	case "claude-cli":
 		return "claude"
+	case "codex-cli":
+		return "codex"
 	case "fake":
 		return "fake"
 	default:

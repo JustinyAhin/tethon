@@ -14,6 +14,590 @@
 				"required": ["events"],
 				"type": "object"
 			},
+			"AgentAvailability": {
+				"additionalProperties": false,
+				"properties": {
+					"available": {
+						"type": "boolean"
+					},
+					"reason": {
+						"type": "string"
+					}
+				},
+				"required": ["available"],
+				"type": "object"
+			},
+			"CodexAccountSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"login_command": {
+						"type": "string"
+					},
+					"plan_type": {
+						"type": "string"
+					},
+					"requires_openai_auth": {
+						"type": "boolean"
+					},
+					"status": {
+						"type": "string"
+					},
+					"type": {
+						"type": "string"
+					}
+				},
+				"required": ["status", "requires_openai_auth"],
+				"type": "object"
+			},
+			"CodexCollaborationMode": {
+				"additionalProperties": false,
+				"properties": {
+					"mode": {
+						"type": "string"
+					},
+					"model": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"reasoning_effort": {
+						"type": "string"
+					}
+				},
+				"required": ["name", "mode"],
+				"type": "object"
+			},
+			"CodexCollaborationSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"modes": {
+						"items": {
+							"$ref": "#/components/schemas/CodexCollaborationMode"
+						},
+						"type": ["array", "null"]
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["status", "modes"],
+				"type": "object"
+			},
+			"CodexConversation": {
+				"additionalProperties": false,
+				"properties": {
+					"created_at": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"cwd": {
+						"type": "string"
+					},
+					"model": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"preview": {
+						"type": "string"
+					},
+					"status": {
+						"type": "string"
+					},
+					"thread_id": {
+						"type": "string"
+					},
+					"updated_at": {
+						"format": "int64",
+						"type": "integer"
+					}
+				},
+				"required": ["thread_id", "preview", "cwd", "status", "created_at", "updated_at"],
+				"type": "object"
+			},
+			"CodexConversationsResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"conversations": {
+						"items": {
+							"$ref": "#/components/schemas/CodexConversation"
+						},
+						"type": ["array", "null"]
+					},
+					"next_cursor": {
+						"type": "string"
+					}
+				},
+				"required": ["conversations"],
+				"type": "object"
+			},
+			"CodexDefaults": {
+				"additionalProperties": false,
+				"properties": {
+					"approval_policy": {
+						"type": "string"
+					},
+					"model": {
+						"type": "string"
+					},
+					"model_provider": {
+						"type": "string"
+					},
+					"reasoning_effort": {
+						"type": "string"
+					},
+					"sandbox_mode": {
+						"type": "string"
+					},
+					"service_tier": {
+						"type": "string"
+					},
+					"web_search": {
+						"type": "string"
+					}
+				},
+				"type": "object"
+			},
+			"CodexHistoryResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"next_cursor": {
+						"type": "string"
+					},
+					"thread_id": {
+						"type": "string"
+					},
+					"turns": {
+						"items": {
+							"$ref": "#/components/schemas/CodexHistoryTurn"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": ["thread_id", "turns"],
+				"type": "object"
+			},
+			"CodexHistoryTurn": {
+				"additionalProperties": false,
+				"properties": {
+					"error": {},
+					"id": {
+						"type": "string"
+					},
+					"items": {
+						"items": {},
+						"type": ["array", "null"]
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["id", "status", "items"],
+				"type": "object"
+			},
+			"CodexMCPServerInfo": {
+				"additionalProperties": false,
+				"properties": {
+					"auth_status": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"runtime_status": {
+						"type": "string"
+					},
+					"tools": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					},
+					"tools_status": {
+						"type": "string"
+					}
+				},
+				"required": ["name", "auth_status", "tools", "tools_status"],
+				"type": "object"
+			},
+			"CodexMCPSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"scope": {
+						"type": "string"
+					},
+					"servers": {
+						"items": {
+							"$ref": "#/components/schemas/CodexMCPServerInfo"
+						},
+						"type": ["array", "null"]
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["status", "scope", "servers"],
+				"type": "object"
+			},
+			"CodexManagedSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"allowed_approval_policies": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"allowed_sandbox_modes": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"allowed_web_search_modes": {
+						"items": {
+							"type": "string"
+						},
+						"type": "array"
+					},
+					"configured": {
+						"type": "boolean"
+					},
+					"model_provider": {
+						"type": "string"
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["status", "configured"],
+				"type": "object"
+			},
+			"CodexPermissionProfile": {
+				"additionalProperties": false,
+				"properties": {
+					"allowed": {
+						"type": "boolean"
+					},
+					"description": {
+						"type": "string"
+					},
+					"id": {
+						"type": "string"
+					}
+				},
+				"required": ["id", "allowed"],
+				"type": "object"
+			},
+			"CodexPermissionProfilesSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"profiles": {
+						"items": {
+							"$ref": "#/components/schemas/CodexPermissionProfile"
+						},
+						"type": ["array", "null"]
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["status", "profiles"],
+				"type": "object"
+			},
+			"CodexRateLimitBucket": {
+				"additionalProperties": false,
+				"properties": {
+					"id": {
+						"type": "string"
+					},
+					"name": {
+						"type": "string"
+					},
+					"primary": {
+						"$ref": "#/components/schemas/CodexRateLimitWindow"
+					},
+					"reached_type": {
+						"type": "string"
+					},
+					"secondary": {
+						"$ref": "#/components/schemas/CodexRateLimitWindow"
+					},
+					"spend_control_reached": {
+						"type": "boolean"
+					}
+				},
+				"type": "object"
+			},
+			"CodexRateLimitWindow": {
+				"additionalProperties": false,
+				"properties": {
+					"resets_at": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"used_percent": {
+						"format": "double",
+						"type": "number"
+					},
+					"window_duration_mins": {
+						"format": "int64",
+						"type": "integer"
+					}
+				},
+				"required": ["used_percent"],
+				"type": "object"
+			},
+			"CodexRateLimitsSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"buckets": {
+						"items": {
+							"$ref": "#/components/schemas/CodexRateLimitBucket"
+						},
+						"type": ["array", "null"]
+					},
+					"ordinary_usage_allowed": {
+						"type": "boolean"
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["status", "buckets"],
+				"type": "object"
+			},
+			"CodexRequestPayload": {
+				"additionalProperties": false,
+				"properties": {
+					"connection_id": {
+						"type": "string"
+					},
+					"item_id": {
+						"type": "string"
+					},
+					"kind": {
+						"type": "string"
+					},
+					"method": {
+						"type": "string"
+					},
+					"original_bytes": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"params": {},
+					"request_id": {},
+					"request_key": {
+						"type": "string"
+					},
+					"thread_id": {
+						"type": "string"
+					},
+					"truncated": {
+						"type": "boolean"
+					},
+					"turn_id": {
+						"type": "string"
+					},
+					"unsupported": {
+						"type": "boolean"
+					}
+				},
+				"required": ["request_key", "request_id", "connection_id", "method", "kind"],
+				"type": "object"
+			},
+			"CodexRespondRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"connection_id": {
+						"type": "string"
+					},
+					"request_id": {},
+					"request_key": {
+						"type": "string"
+					},
+					"result": {}
+				},
+				"required": ["request_key", "connection_id", "result"],
+				"type": "object"
+			},
+			"CodexSessionResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"pending_requests": {
+						"items": {
+							"$ref": "#/components/schemas/CodexRequestPayload"
+						},
+						"type": ["array", "null"]
+					},
+					"queue": {
+						"items": {},
+						"type": ["array", "null"]
+					},
+					"queue_available": {
+						"type": "boolean"
+					},
+					"queue_next_cursor": {
+						"type": "string"
+					},
+					"seq": {
+						"format": "int64",
+						"type": "integer"
+					},
+					"state": {
+						"$ref": "#/components/schemas/CodexSessionState"
+					},
+					"workspace_owned": {
+						"type": "boolean"
+					}
+				},
+				"required": [
+					"seq",
+					"state",
+					"pending_requests",
+					"queue",
+					"queue_available",
+					"workspace_owned"
+				],
+				"type": "object"
+			},
+			"CodexSessionState": {
+				"additionalProperties": false,
+				"properties": {
+					"connection_id": {
+						"type": "string"
+					},
+					"connection_state": {
+						"type": "string"
+					},
+					"conversation_state": {
+						"type": "string"
+					},
+					"cwd": {
+						"type": "string"
+					},
+					"server_version": {
+						"type": "string"
+					},
+					"socket_path": {
+						"type": "string"
+					},
+					"thread_id": {
+						"type": "string"
+					},
+					"turn_id": {
+						"type": "string"
+					},
+					"turn_state": {
+						"type": "string"
+					}
+				},
+				"required": [
+					"thread_id",
+					"socket_path",
+					"connection_id",
+					"connection_state",
+					"conversation_state",
+					"turn_state"
+				],
+				"type": "object"
+			},
+			"CodexSettingsResponse": {
+				"additionalProperties": false,
+				"properties": {
+					"account": {
+						"$ref": "#/components/schemas/CodexAccountSummary"
+					},
+					"collaboration": {
+						"$ref": "#/components/schemas/CodexCollaborationSummary"
+					},
+					"config_status": {
+						"type": "string"
+					},
+					"cwd": {
+						"type": "string"
+					},
+					"defaults": {
+						"$ref": "#/components/schemas/CodexDefaults"
+					},
+					"managed": {
+						"$ref": "#/components/schemas/CodexManagedSummary"
+					},
+					"mcp": {
+						"$ref": "#/components/schemas/CodexMCPSummary"
+					},
+					"permission_profiles": {
+						"$ref": "#/components/schemas/CodexPermissionProfilesSummary"
+					},
+					"rate_limits": {
+						"$ref": "#/components/schemas/CodexRateLimitsSummary"
+					},
+					"skills": {
+						"$ref": "#/components/schemas/CodexSkillsSummary"
+					},
+					"warnings": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": [
+					"cwd",
+					"account",
+					"defaults",
+					"config_status",
+					"managed",
+					"rate_limits",
+					"skills",
+					"mcp",
+					"collaboration",
+					"permission_profiles",
+					"warnings"
+				],
+				"type": "object"
+			},
+			"CodexSkillInfo": {
+				"additionalProperties": false,
+				"properties": {
+					"description": {
+						"type": "string"
+					},
+					"display_name": {
+						"type": "string"
+					},
+					"enabled": {
+						"type": "boolean"
+					},
+					"name": {
+						"type": "string"
+					},
+					"scope": {
+						"type": "string"
+					}
+				},
+				"required": ["name", "scope", "enabled"],
+				"type": "object"
+			},
+			"CodexSkillsSummary": {
+				"additionalProperties": false,
+				"properties": {
+					"skills": {
+						"items": {
+							"$ref": "#/components/schemas/CodexSkillInfo"
+						},
+						"type": ["array", "null"]
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["status", "skills"],
+				"type": "object"
+			},
 			"CreateSessionRequest": {
 				"additionalProperties": false,
 				"properties": {
@@ -26,10 +610,16 @@
 					"branch": {
 						"type": "string"
 					},
+					"codex_permission_profile": {
+						"type": "string"
+					},
 					"cwd": {
 						"type": "string"
 					},
 					"host_id": {
+						"type": "string"
+					},
+					"native_thread_id": {
 						"type": "string"
 					},
 					"permission_mode": {
@@ -38,10 +628,22 @@
 					"prompt": {
 						"type": "string"
 					},
+					"reasoning_effort": {
+						"type": "string"
+					},
 					"repo": {
 						"type": "string"
 					},
 					"repo_id": {
+						"type": "string"
+					},
+					"request_id": {
+						"type": "string"
+					},
+					"requested_model": {
+						"type": "string"
+					},
+					"workspace_mode": {
 						"type": "string"
 					}
 				},
@@ -86,6 +688,12 @@
 			"HostSummary": {
 				"additionalProperties": false,
 				"properties": {
+					"agent_status": {
+						"additionalProperties": {
+							"$ref": "#/components/schemas/AgentAvailability"
+						},
+						"type": "object"
+					},
 					"agents": {
 						"items": {
 							"type": "string"
@@ -137,7 +745,26 @@
 			"InputRequest": {
 				"additionalProperties": false,
 				"properties": {
+					"codex_permission_profile": {
+						"type": "string"
+					},
+					"mode": {
+						"enum": ["start", "steer", "queue"],
+						"type": "string"
+					},
+					"reasoning_effort": {
+						"type": "string"
+					},
+					"request_id": {
+						"type": "string"
+					},
+					"requested_model": {
+						"type": "string"
+					},
 					"text": {
+						"type": "string"
+					},
+					"turn_id": {
 						"type": "string"
 					}
 				},
@@ -170,6 +797,81 @@
 				"required": ["sessions"],
 				"type": "object"
 			},
+			"ModelCatalog": {
+				"additionalProperties": false,
+				"properties": {
+					"agent": {
+						"type": "string"
+					},
+					"message": {
+						"type": "string"
+					},
+					"models": {
+						"items": {
+							"$ref": "#/components/schemas/ModelInfo"
+						},
+						"type": ["array", "null"]
+					},
+					"source": {
+						"type": "string"
+					},
+					"status": {
+						"type": "string"
+					}
+				},
+				"required": ["agent", "status", "models"],
+				"type": "object"
+			},
+			"ModelInfo": {
+				"additionalProperties": false,
+				"properties": {
+					"default_reasoning_effort": {
+						"type": "string"
+					},
+					"description": {
+						"type": "string"
+					},
+					"id": {
+						"type": "string"
+					},
+					"input_modalities": {
+						"items": {
+							"type": "string"
+						},
+						"type": ["array", "null"]
+					},
+					"is_default": {
+						"type": "boolean"
+					},
+					"label": {
+						"type": "string"
+					},
+					"provider": {
+						"type": "string"
+					},
+					"reasoning_efforts": {
+						"items": {
+							"$ref": "#/components/schemas/ModelReasoningEffort"
+						},
+						"type": ["array", "null"]
+					}
+				},
+				"required": ["id", "label", "provider"],
+				"type": "object"
+			},
+			"ModelReasoningEffort": {
+				"additionalProperties": false,
+				"properties": {
+					"description": {
+						"type": "string"
+					},
+					"id": {
+						"type": "string"
+					}
+				},
+				"required": ["id"],
+				"type": "object"
+			},
 			"PushApprovalTestRequest": {
 				"additionalProperties": false,
 				"properties": {
@@ -180,6 +882,15 @@
 						"type": "string"
 					},
 					"host_id": {
+						"type": "string"
+					},
+					"native_connection_id": {
+						"type": "string"
+					},
+					"native_method": {
+						"type": "string"
+					},
+					"native_request_key": {
 						"type": "string"
 					},
 					"repo": {
@@ -303,6 +1014,12 @@
 			"RegisterHostRequest": {
 				"additionalProperties": false,
 				"properties": {
+					"agent_status": {
+						"additionalProperties": {
+							"$ref": "#/components/schemas/AgentAvailability"
+						},
+						"type": "object"
+					},
 					"agents": {
 						"items": {
 							"type": "string"
@@ -403,6 +1120,9 @@
 					"cli": {
 						"type": "string"
 					},
+					"codex": {
+						"$ref": "#/components/schemas/CodexSessionState"
+					},
 					"created_at": {
 						"format": "date-time",
 						"type": "string"
@@ -429,6 +1149,9 @@
 					"repo_id": {
 						"type": "string"
 					},
+					"requested_model": {
+						"type": "string"
+					},
 					"status": {
 						"type": "string"
 					},
@@ -448,6 +1171,15 @@
 					"updated_at",
 					"last_seq"
 				],
+				"type": "object"
+			},
+			"StopRequest": {
+				"additionalProperties": false,
+				"properties": {
+					"turn_id": {
+						"type": "string"
+					}
+				},
 				"type": "object"
 			}
 		},
@@ -691,6 +1423,285 @@
 					}
 				},
 				"summary": "Register or refresh a host",
+				"tags": ["hosts"]
+			}
+		},
+		"/hosts/{host_id}/agents/codex-cli/conversations": {
+			"get": {
+				"operationId": "listCodexConversations",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"explode": false,
+						"in": "query",
+						"name": "cursor",
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"explode": false,
+						"in": "query",
+						"name": "search",
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CodexConversationsResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "List native Codex conversations on a host",
+				"tags": ["sessions"]
+			}
+		},
+		"/hosts/{host_id}/agents/codex-cli/settings": {
+			"get": {
+				"operationId": "getCodexSettings",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"explode": false,
+						"in": "query",
+						"name": "cwd",
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CodexSettingsResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"400": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Request"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Read native Codex account, defaults, skills, and tool status",
+				"tags": ["hosts"]
+			}
+		},
+		"/hosts/{host_id}/agents/{agent}/models": {
+			"get": {
+				"operationId": "listAgentModels",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "agent",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ModelCatalog"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "List provider models available to an agent on a host",
 				"tags": ["hosts"]
 			}
 		},
@@ -1289,6 +2300,103 @@
 				"tags": ["sessions"]
 			}
 		},
+		"/sessions/{host_id}/{local_id}/archive": {
+			"post": {
+				"operationId": "archiveCodexConversation",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"409": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Conflict"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Archive an inactive native Codex conversation",
+				"tags": ["sessions"]
+			}
+		},
 		"/sessions/{host_id}/{local_id}/cancel": {
 			"post": {
 				"operationId": "cancelSession",
@@ -1310,6 +2418,15 @@
 						}
 					}
 				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/StopRequest"
+							}
+						}
+					}
+				},
 				"responses": {
 					"202": {
 						"content": {
@@ -1363,6 +2480,210 @@
 					}
 				},
 				"summary": "Cancel an active session",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/conversation": {
+			"delete": {
+				"operationId": "deleteCodexConversation",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"409": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Conflict"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Delete native Codex history and preserve working files",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/history": {
+			"get": {
+				"operationId": "getCodexHistory",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"explode": false,
+						"in": "query",
+						"name": "cursor",
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"explode": false,
+						"in": "query",
+						"name": "limit",
+						"schema": {
+							"default": 20,
+							"format": "int64",
+							"maximum": 100,
+							"minimum": 1,
+							"type": "integer"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CodexHistoryResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Read a page of native Codex turn history",
 				"tags": ["sessions"]
 			}
 		},
@@ -1450,6 +2771,210 @@
 					}
 				},
 				"summary": "Send input to a session",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/native": {
+			"get": {
+				"operationId": "getCodexSession",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"200": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/CodexSessionResponse"
+								}
+							}
+						},
+						"description": "OK"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Read native Codex state and pending requests",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/requests/respond": {
+			"post": {
+				"operationId": "respondCodexRequest",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/CodexRespondRequest"
+							}
+						}
+					},
+					"required": true
+				},
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"400": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Request"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"409": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Conflict"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Respond to a native Codex request using its exact result shape",
 				"tags": ["sessions"]
 			}
 		},
@@ -1557,6 +3082,200 @@
 					}
 				},
 				"summary": "Stream session events from a cursor",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/unarchive": {
+			"post": {
+				"operationId": "unarchiveCodexConversation",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"409": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Conflict"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Restore an archived native Codex conversation",
+				"tags": ["sessions"]
+			}
+		},
+		"/sessions/{host_id}/{local_id}/workspace/cleanup": {
+			"post": {
+				"operationId": "cleanupCodexWorkspace",
+				"parameters": [
+					{
+						"in": "path",
+						"name": "host_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					},
+					{
+						"in": "path",
+						"name": "local_id",
+						"required": true,
+						"schema": {
+							"type": "string"
+						}
+					}
+				],
+				"responses": {
+					"202": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ActionEventsResponse"
+								}
+							}
+						},
+						"description": "Accepted"
+					},
+					"404": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Not Found"
+					},
+					"409": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Conflict"
+					},
+					"422": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Unprocessable Entity"
+					},
+					"500": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Internal Server Error"
+					},
+					"502": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Bad Gateway"
+					},
+					"503": {
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/HubStatusError"
+								}
+							}
+						},
+						"description": "Service Unavailable"
+					}
+				},
+				"summary": "Remove a clean Tethon-owned isolated workspace",
 				"tags": ["sessions"]
 			}
 		}

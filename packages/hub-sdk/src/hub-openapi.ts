@@ -72,6 +72,57 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	'/hosts/{host_id}/agents/codex-cli/conversations': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** List native Codex conversations on a host */
+		get: operations['listCodexConversations'];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	'/hosts/{host_id}/agents/codex-cli/settings': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** Read native Codex account, defaults, skills, and tool status */
+		get: operations['getCodexSettings'];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	'/hosts/{host_id}/agents/{agent}/models': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** List provider models available to an agent on a host */
+		get: operations['listAgentModels'];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	'/hosts/{host_id}/heartbeat': {
 		parameters: {
 			query?: never;
@@ -192,6 +243,23 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	'/sessions/{host_id}/{local_id}/archive': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/** Archive an inactive native Codex conversation */
+		post: operations['archiveCodexConversation'];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	'/sessions/{host_id}/{local_id}/cancel': {
 		parameters: {
 			query?: never;
@@ -203,6 +271,40 @@ export interface paths {
 		put?: never;
 		/** Cancel an active session */
 		post: operations['cancelSession'];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	'/sessions/{host_id}/{local_id}/conversation': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		post?: never;
+		/** Delete native Codex history and preserve working files */
+		delete: operations['deleteCodexConversation'];
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	'/sessions/{host_id}/{local_id}/history': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** Read a page of native Codex turn history */
+		get: operations['getCodexHistory'];
+		put?: never;
+		post?: never;
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -226,6 +328,40 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	'/sessions/{host_id}/{local_id}/native': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** Read native Codex state and pending requests */
+		get: operations['getCodexSession'];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	'/sessions/{host_id}/{local_id}/requests/respond': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/** Respond to a native Codex request using its exact result shape */
+		post: operations['respondCodexRequest'];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	'/sessions/{host_id}/{local_id}/stream': {
 		parameters: {
 			query?: never;
@@ -243,6 +379,40 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	'/sessions/{host_id}/{local_id}/unarchive': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/** Restore an archived native Codex conversation */
+		post: operations['unarchiveCodexConversation'];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
+	'/sessions/{host_id}/{local_id}/workspace/cleanup': {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		get?: never;
+		put?: never;
+		/** Remove a clean Tethon-owned isolated workspace */
+		post: operations['cleanupCodexWorkspace'];
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -250,16 +420,195 @@ export interface components {
 		ActionEventsResponse: {
 			events: components['schemas']['Event'][] | null;
 		};
+		AgentAvailability: {
+			available: boolean;
+			reason?: string;
+		};
+		CodexAccountSummary: {
+			login_command?: string;
+			plan_type?: string;
+			requires_openai_auth: boolean;
+			status: string;
+			type?: string;
+		};
+		CodexCollaborationMode: {
+			mode: string;
+			model?: string;
+			name: string;
+			reasoning_effort?: string;
+		};
+		CodexCollaborationSummary: {
+			modes: components['schemas']['CodexCollaborationMode'][] | null;
+			status: string;
+		};
+		CodexConversation: {
+			/** Format: int64 */
+			created_at: number;
+			cwd: string;
+			model?: string;
+			name?: string;
+			preview: string;
+			status: string;
+			thread_id: string;
+			/** Format: int64 */
+			updated_at: number;
+		};
+		CodexConversationsResponse: {
+			conversations: components['schemas']['CodexConversation'][] | null;
+			next_cursor?: string;
+		};
+		CodexDefaults: {
+			approval_policy?: string;
+			model?: string;
+			model_provider?: string;
+			reasoning_effort?: string;
+			sandbox_mode?: string;
+			service_tier?: string;
+			web_search?: string;
+		};
+		CodexHistoryResponse: {
+			next_cursor?: string;
+			thread_id: string;
+			turns: components['schemas']['CodexHistoryTurn'][] | null;
+		};
+		CodexHistoryTurn: {
+			error?: unknown;
+			id: string;
+			items: unknown[] | null;
+			status: string;
+		};
+		CodexMCPServerInfo: {
+			auth_status: string;
+			name: string;
+			runtime_status?: string;
+			tools: string[] | null;
+			tools_status: string;
+		};
+		CodexMCPSummary: {
+			scope: string;
+			servers: components['schemas']['CodexMCPServerInfo'][] | null;
+			status: string;
+		};
+		CodexManagedSummary: {
+			allowed_approval_policies?: string[];
+			allowed_sandbox_modes?: string[];
+			allowed_web_search_modes?: string[];
+			configured: boolean;
+			model_provider?: string;
+			status: string;
+		};
+		CodexPermissionProfile: {
+			allowed: boolean;
+			description?: string;
+			id: string;
+		};
+		CodexPermissionProfilesSummary: {
+			profiles: components['schemas']['CodexPermissionProfile'][] | null;
+			status: string;
+		};
+		CodexRateLimitBucket: {
+			id?: string;
+			name?: string;
+			primary?: components['schemas']['CodexRateLimitWindow'];
+			reached_type?: string;
+			secondary?: components['schemas']['CodexRateLimitWindow'];
+			spend_control_reached?: boolean;
+		};
+		CodexRateLimitWindow: {
+			/** Format: int64 */
+			resets_at?: number;
+			/** Format: double */
+			used_percent: number;
+			/** Format: int64 */
+			window_duration_mins?: number;
+		};
+		CodexRateLimitsSummary: {
+			buckets: components['schemas']['CodexRateLimitBucket'][] | null;
+			ordinary_usage_allowed?: boolean;
+			status: string;
+		};
+		CodexRequestPayload: {
+			connection_id: string;
+			item_id?: string;
+			kind: string;
+			method: string;
+			/** Format: int64 */
+			original_bytes?: number;
+			params?: unknown;
+			request_id: unknown;
+			request_key: string;
+			thread_id?: string;
+			truncated?: boolean;
+			turn_id?: string;
+			unsupported?: boolean;
+		};
+		CodexRespondRequest: {
+			connection_id: string;
+			request_id?: unknown;
+			request_key: string;
+			result: unknown;
+		};
+		CodexSessionResponse: {
+			pending_requests: components['schemas']['CodexRequestPayload'][] | null;
+			queue: unknown[] | null;
+			queue_available: boolean;
+			queue_next_cursor?: string;
+			/** Format: int64 */
+			seq: number;
+			state: components['schemas']['CodexSessionState'];
+			workspace_owned: boolean;
+		};
+		CodexSessionState: {
+			connection_id: string;
+			connection_state: string;
+			conversation_state: string;
+			cwd?: string;
+			server_version?: string;
+			socket_path: string;
+			thread_id: string;
+			turn_id?: string;
+			turn_state: string;
+		};
+		CodexSettingsResponse: {
+			account: components['schemas']['CodexAccountSummary'];
+			collaboration: components['schemas']['CodexCollaborationSummary'];
+			config_status: string;
+			cwd: string;
+			defaults: components['schemas']['CodexDefaults'];
+			managed: components['schemas']['CodexManagedSummary'];
+			mcp: components['schemas']['CodexMCPSummary'];
+			permission_profiles: components['schemas']['CodexPermissionProfilesSummary'];
+			rate_limits: components['schemas']['CodexRateLimitsSummary'];
+			skills: components['schemas']['CodexSkillsSummary'];
+			warnings: string[] | null;
+		};
+		CodexSkillInfo: {
+			description?: string;
+			display_name?: string;
+			enabled: boolean;
+			name: string;
+			scope: string;
+		};
+		CodexSkillsSummary: {
+			skills: components['schemas']['CodexSkillInfo'][] | null;
+			status: string;
+		};
 		CreateSessionRequest: {
 			agent: string;
 			base_ref?: string;
 			branch: string;
+			codex_permission_profile?: string;
 			cwd: string;
 			host_id?: string;
+			native_thread_id?: string;
 			permission_mode?: string;
 			prompt?: string;
+			reasoning_effort?: string;
 			repo?: string;
 			repo_id?: string;
+			request_id?: string;
+			requested_model?: string;
+			workspace_mode?: string;
 		};
 		CreateSessionResponse: {
 			id: string;
@@ -275,6 +624,9 @@ export interface components {
 			type: string;
 		};
 		HostSummary: {
+			agent_status?: {
+				[key: string]: components['schemas']['AgentAvailability'];
+			};
 			agents: string[] | null;
 			host_id: string;
 			/** Format: date-time */
@@ -289,7 +641,14 @@ export interface components {
 			error: string;
 		};
 		InputRequest: {
+			codex_permission_profile?: string;
+			/** @enum {string} */
+			mode?: 'start' | 'steer' | 'queue';
+			reasoning_effort?: string;
+			request_id?: string;
+			requested_model?: string;
 			text: string;
+			turn_id?: string;
 		};
 		ListHostsResponse: {
 			hosts: components['schemas']['HostSummary'][] | null;
@@ -297,10 +656,34 @@ export interface components {
 		ListSessionsResponse: {
 			sessions: components['schemas']['SessionSummary'][] | null;
 		};
+		ModelCatalog: {
+			agent: string;
+			message?: string;
+			models: components['schemas']['ModelInfo'][] | null;
+			source?: string;
+			status: string;
+		};
+		ModelInfo: {
+			default_reasoning_effort?: string;
+			description?: string;
+			id: string;
+			input_modalities?: string[] | null;
+			is_default?: boolean;
+			label: string;
+			provider: string;
+			reasoning_efforts?: components['schemas']['ModelReasoningEffort'][] | null;
+		};
+		ModelReasoningEffort: {
+			description?: string;
+			id: string;
+		};
 		PushApprovalTestRequest: {
 			agent?: string;
 			command?: string;
 			host_id: string;
+			native_connection_id?: string;
+			native_method?: string;
+			native_request_key?: string;
 			repo?: string;
 			request_id: string;
 			session_id: string;
@@ -342,6 +725,9 @@ export interface components {
 			updated_at: string;
 		};
 		RegisterHostRequest: {
+			agent_status?: {
+				[key: string]: components['schemas']['AgentAvailability'];
+			};
 			agents: string[] | null;
 			host_id: string;
 			name: string;
@@ -369,6 +755,7 @@ export interface components {
 			base_ref?: string;
 			branch: string;
 			cli?: string;
+			codex?: components['schemas']['CodexSessionState'];
 			/** Format: date-time */
 			created_at: string;
 			cwd: string;
@@ -379,9 +766,13 @@ export interface components {
 			model?: string;
 			repo: string;
 			repo_id?: string;
+			requested_model?: string;
 			status: string;
 			/** Format: date-time */
 			updated_at: string;
+		};
+		StopRequest: {
+			turn_id?: string;
 		};
 	};
 	responses: never;
@@ -588,6 +979,222 @@ export interface operations {
 			};
 			/** @description Internal Server Error */
 			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	listCodexConversations: {
+		parameters: {
+			query?: {
+				cursor?: string;
+				search?: string;
+			};
+			header?: never;
+			path: {
+				host_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description OK */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['CodexConversationsResponse'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	getCodexSettings: {
+		parameters: {
+			query?: {
+				cwd?: string;
+			};
+			header?: never;
+			path: {
+				host_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description OK */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['CodexSettingsResponse'];
+				};
+			};
+			/** @description Bad Request */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	listAgentModels: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				host_id: string;
+				agent: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description OK */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['ModelCatalog'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
 				headers: {
 					[name: string]: unknown;
 				};
@@ -1089,7 +1696,7 @@ export interface operations {
 			};
 		};
 	};
-	cancelSession: {
+	archiveCodexConversation: {
 		parameters: {
 			query?: never;
 			header?: never;
@@ -1108,6 +1715,235 @@ export interface operations {
 				};
 				content: {
 					'application/json': components['schemas']['ActionEventsResponse'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Conflict */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	cancelSession: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				host_id: string;
+				local_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: {
+			content: {
+				'application/json': components['schemas']['StopRequest'];
+			};
+		};
+		responses: {
+			/** @description Accepted */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['ActionEventsResponse'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	deleteCodexConversation: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				host_id: string;
+				local_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Accepted */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['ActionEventsResponse'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Conflict */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	getCodexHistory: {
+		parameters: {
+			query?: {
+				cursor?: string;
+				limit?: number;
+			};
+			header?: never;
+			path: {
+				host_id: string;
+				local_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description OK */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['CodexHistoryResponse'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
 				};
 			};
 			/** @description Unprocessable Entity */
@@ -1211,6 +2047,164 @@ export interface operations {
 			};
 		};
 	};
+	getCodexSession: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				host_id: string;
+				local_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description OK */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['CodexSessionResponse'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	respondCodexRequest: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				host_id: string;
+				local_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody: {
+			content: {
+				'application/json': components['schemas']['CodexRespondRequest'];
+			};
+		};
+		responses: {
+			/** @description Accepted */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['ActionEventsResponse'];
+				};
+			};
+			/** @description Bad Request */
+			400: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Conflict */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
 	streamSession: {
 		parameters: {
 			query?: {
@@ -1240,6 +2234,160 @@ export interface operations {
 						session_id: string;
 						type: string;
 					};
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	unarchiveCodexConversation: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				host_id: string;
+				local_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Accepted */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['ActionEventsResponse'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Conflict */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Unprocessable Entity */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Internal Server Error */
+			500: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Bad Gateway */
+			502: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Service Unavailable */
+			503: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+		};
+	};
+	cleanupCodexWorkspace: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path: {
+				host_id: string;
+				local_id: string;
+			};
+			cookie?: never;
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Accepted */
+			202: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['ActionEventsResponse'];
+				};
+			};
+			/** @description Not Found */
+			404: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
+				};
+			};
+			/** @description Conflict */
+			409: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					'application/json': components['schemas']['HubStatusError'];
 				};
 			};
 			/** @description Unprocessable Entity */

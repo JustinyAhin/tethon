@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { AuthProvider, useAuth } from '@/lib/hub/auth-context';
+import '@/lib/push/resolved-task';
 import '@/lib/push/responses';
 
 export default function RootLayout() {

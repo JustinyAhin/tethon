@@ -12,7 +12,7 @@ The phone is the primary client. The web app provides browser access.
 - Keep agents running when clients disconnect.
 - Resume event streams from the last stored cursor.
 - Support multiple hosts without client reconfiguration.
-- Run parallel sessions in separate Git worktrees.
+- Offer isolated Git worktrees when sessions need separate working files.
 - Support approval actions from notifications.
 - Add raw terminal access after the structured workflow is reliable.
 
@@ -44,6 +44,32 @@ It registers capabilities, sends heartbeats, and reconnects to the hub.
 Sleep prevention, Keychain integration, and raw PTY access remain planned.
 Resource limits and timeouts are target supervision requirements.
 
+### Native Codex sessions
+
+For `tethon-87y`, hostd connects to the managed Codex app-server through its
+local Unix socket. Keep the hub as the phone and browser transport.
+Start the native daemon only when it is offline.
+Do not restart or stop a shared daemon during connection cleanup.
+
+Codex owns threads, turns, history, pending requests, settings, and queued input.
+Tethon owns device access, routing, notifications, and append-only delivery records.
+Keep native identifiers in these records. Reconcile native state after a
+connection loss before enabling actions. Do not replay uncertain prompts.
+
+Use an existing folder for new Codex conversations by default.
+Offer isolated worktrees as an explicit option.
+Turn completion, Stop, archive, and client disconnection must preserve working files.
+Cleanup is a separate action. Keep the existing Claude adapter behavior.
+
+Preserve native model, reasoning, permission, and instruction defaults unless
+the user selects an override. Pass user prompts without added coordinator instructions.
+Use native model, skill, MCP, and account discovery.
+
+The first supported protocol line is Codex `0.163.x` on Unix hosts.
+Verify other versions before enabling them.
+See [adapter research](agent-adapter-research.md#codex) for performed checks,
+required methods, and interface limits.
+
 ### Clients
 
 The mobile app uses Expo and React Native.
@@ -51,7 +77,7 @@ The web app uses SvelteKit on Cloudflare Workers.
 Both clients use the hub API and send actions to the host through the hub.
 Clients store event copies for display and reconnect. The host log remains authoritative.
 
-Native diff views, raw terminal views, and operating-system integrations remain separate product work.
+Raw terminal views and operating-system integrations remain separate product work.
 
 ## Session protocol
 
@@ -92,4 +118,3 @@ Keep raw terminal work after the core session and approval workflow.
 
 - A dedicated event for routine provider notices, including rate limits.
 - Additional tool-request and diff events beyond current `tool_result` coverage.
-- Codex output and approval mapping without agent-specific client contracts.

@@ -76,6 +76,10 @@ func (s *Server) Handler() http.Handler {
 			s.handleApprovalNotify(w, r, hostID)
 			return
 		}
+		if hostID, ok := approvalResolvedNotifyHostID(r); ok {
+			s.handleApprovalResolvedNotify(w, r, hostID)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -215,14 +219,15 @@ func (s *Server) summary(hostID string) protocol.HostSummary {
 	record := s.hosts[hostID]
 	s.mu.RUnlock()
 	return protocol.HostSummary{
-		HostID:    record.HostID,
-		Name:      record.Name,
-		URL:       record.URL,
-		Agents:    record.Agents,
-		RepoRoots: record.RepoRoots,
-		Repos:     record.Repos,
-		LastSeen:  record.LastSeen,
-		Online:    s.isOnline(record),
+		HostID:      record.HostID,
+		Name:        record.Name,
+		URL:         record.URL,
+		Agents:      record.Agents,
+		AgentStatus: record.AgentStatus,
+		RepoRoots:   record.RepoRoots,
+		Repos:       record.Repos,
+		LastSeen:    record.LastSeen,
+		Online:      s.isOnline(record),
 	}
 }
 

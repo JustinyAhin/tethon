@@ -47,60 +47,117 @@ Open question before implementation:
 
 ## Codex
 
-Recommended MVP adapter path: invoke the installed `codex` CLI directly from `hostd`, starting with non-interactive `codex exec --json`.
+Use the native managed app-server for interactive Codex sessions.
+The earlier `codex exec --json` recommendation is superseded for `tethon-87y`.
+Keep non-interactive execution outside this integration.
 
-Why:
+### Interface decision
 
-- Codex local CLI can use ChatGPT subscription auth.
-- `codex exec --json` emits JSONL events suitable for mapping into Tethon events.
-- This avoids requiring OpenAI API keys for the MVP adapter.
+Connect directly to the managed daemon's Unix socket with a WebSocket handshake.
+Discover its socket and versions with `codex app-server daemon version`.
+If it is offline, use the idempotent `codex app-server daemon start` command.
+Initialize each connection once. Close only the Tethon connection during cleanup.
 
-Observed command:
+A Tethon-owned stdio server would add an engine and prevent direct terminal
+attachment to that transport. A custom local listener would add setup and
+ownership rules. The managed server already supplies shared connections.
+Keep the hub for Tethon device access and notifications.
+Native `remote-control` supplies separate pairing commands. Tethon does not need
+new pairing credentials or a public native listener.
 
-```sh
-codex exec --json --sandbox read-only "Reply with exactly: ok"
-```
+`codex app-server proxy` relays raw socket bytes. It does not convert JSONL
+messages into WebSocket frames. Do not use it as a JSONL subprocess.
 
-Observed useful event shapes:
+See [the design owner](agent-control-design.md#native-codex-sessions) for state
+ownership, defaults, workspace lifecycle, and supported versions.
 
-- `thread.started` with `thread_id`.
-- `turn.started`.
-- `item.completed` with `item.type: "agent_message"` and `text`.
-- `turn.completed` with usage.
+### Performed checks: 2026-10-19
 
-Important details:
+The CLI and running managed daemon both reported `0.163.0` on macOS.
+The daemon was already running. The checks did not restart or stop it.
 
-- The installed Codex CLI is `codex-cli 0.142.3`.
-- `codex doctor` confirms the local auth mode is ChatGPT, not API key.
-- The installed `codex exec` exposes `--json`, `--sandbox`, `--cd`, `--add-dir`, `--ephemeral`, and resume support.
-- The installed `codex exec` help does not expose `--ask-for-approval`, even though broader Codex docs discuss approval policy. The adapter should use the installed CLI surface as source of truth.
-- `codex exec` is non-interactive by design. It is likely a better Phase 2 fallback/secondary adapter than the first long-lived coding-agent target.
+- Generated stable JSON Schema and TypeScript bindings in a temporary directory.
+- Generated experimental JSON Schema separately to identify gated methods.
+- Initialized a direct Unix WebSocket connection.
+- Read account type through `account/read`: `chatgpt`. No credential files were read.
+- Read seven model descriptors through `model/list`.
+- Started a native thread in a temporary working folder.
+- Completed a real text turn through `turn/start` and native notifications.
+- Joined the same thread from a second connection with `thread/resume`.
+- Confirmed that the first connection could close while the thread stayed loaded.
+- Read the same thread after reconnection. The working folder stayed unchanged.
+- Opened the official terminal UI with `codex resume --remote unix:// <thread-id>`.
+- Confirmed that the terminal showed the same prompt and response.
+- Closed the terminal. It reported that running work continues after disconnection.
 
-Open question before implementation:
+The native server canonicalized `/tmp` to `/private/tmp`.
+Compare resolved paths when checking working-folder identity.
+A new thread without its first persisted turn could not be resumed by another
+connection. Create and persist the first turn before offering terminal attachment.
 
-- Whether `codex app-server` or another subscription-backed local Codex surface provides a stable enough interactive stream for long-lived sessions. It is currently documented as experimental, so do not build MVP on it yet.
+The implemented local hub and host path also passed real command output,
+follow-up, Stop, archive, restore, and working-file preservation checks.
+A browser answered a real native command approval with the offered cancel action.
+An independent native connection observed resolution and turn completion.
+The phone answered a real native question after a host restart.
+The browser removed that request without a reload. An old response generation
+was rejected while the current native request stayed pending.
 
-## Adapter recommendation
+Real steering and native queued input passed across a host restart.
+Native history retained three unique user inputs across two completed turns.
+The stale-turn Stop request was rejected. No prompt was sent again.
 
-Build the Phase 2 adapter interface around a local subprocess, not a provider API client:
+A source-built iOS simulator app displayed native history, sent follow-ups,
+stopped a running tool turn, and sent another follow-up on the same thread.
+The official terminal displayed the phone reply. The phone displayed a later
+terminal reply once. Draft recovery after leaving and reopening also passed.
+These checks do not establish physical-device notification delivery.
 
-- `Start(ctx, session, initialPrompt)` launches a local CLI process in the session cwd.
-- stdout/stderr JSON events are parsed and appended to the Tethon session log.
-- `Input(ctx, text)` is initially allowed only for adapters that prove long-lived stdin support.
-- `Cancel(ctx)` terminates the process and emits `done` or `error`.
-- Adapters expose capabilities: `stream`, `interactive_input`, `approvals`, `resume`.
+An isolated project supplied its own `AGENTS.md` and local skill.
+Native discovery listed the enabled project skill. A native turn returned
+markers supplied only by those files. Both files stayed unchanged.
 
-First implementation target:
+Use native interactive source defaults for `thread/list`.
+The tested server reported Tethon-created threads with source `vscode`.
+A filter restricted to `cli` and `appServer` hid those conversations.
 
-1. `claude-cli` adapter using the installed `claude` binary and subscription auth.
-2. Keep fake agent for tests.
-3. Add `codex-cli` only after the Claude path proves the hostd adapter lifecycle.
+An already-loaded idle thread ignored model and reasoning changes on
+`thread/resume`. Explicit overrides take effect through the next `turn/start`.
+A real turn accepted a selected model, effort, and discovered `:read-only`
+permission profile. A later native resume reported the selected effective settings.
+The clients require a prompt when a resumed conversation selects an override.
+
+### Required native surfaces
+
+| Purpose | Native methods or events |
+| --- | --- |
+| Connection | `initialize`, `initialized` |
+| Conversations | `thread/start`, `thread/list`, `thread/read`, `thread/resume` |
+| History | `thread/turns/list`, `thread/items/list` |
+| Input and Stop | `turn/start`, `turn/steer`, `turn/interrupt` |
+| Live output | `turn/*`, `item/*`, `thread/status/changed` |
+| Requests | Native server request IDs and exact response shapes |
+| Resolution | `serverRequest/resolved` |
+| Discovery | `model/list`, `config/read`, `skills/list`, `mcpServerStatus/list` |
+| Account | `account/read`, `account/rateLimits/read` |
+| Native queue | Experimental `thread/queue/*`; requires explicit capability opt-in |
+
+Keep unknown event methods and bounded payloads in delivery records.
+Disable unsupported requests rather than inventing answers.
+Reconcile pending requests from the live server after reconnect.
+Do not recreate pending requests from old delivery events.
+
+## Adapter boundary
+
+Keep `claude-cli` and the fake adapter functional.
+Add Codex through the existing registry with a local app-server connection.
+Do not add a provider agent loop or replace native history with Tethon events.
+Keep process ownership separate from connection ownership.
 
 ## Sources
 
 - Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference
 - Claude Code with Pro/Max plans: https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan
 - Claude Agent SDK with Claude plan: https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan
-- Codex manual, non-interactive mode: https://developers.openai.com/codex/noninteractive.md
-- Codex manual, CLI reference: https://developers.openai.com/codex/cli/reference.md
-- Codex manual, approvals and security: https://developers.openai.com/codex/agent-approvals-security.md
+- Codex app-server: https://learn.chatgpt.com/docs/app-server
+- Codex commands: https://learn.chatgpt.com/docs/developer-commands

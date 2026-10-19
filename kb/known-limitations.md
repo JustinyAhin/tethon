@@ -32,8 +32,9 @@ For deployment checks, use the [hub runbook](hub-deploy-dokploy.md#verify).
 
 - Sleep prevention with `caffeinate` remains planned.
 - The Mac installation stores secrets in an environment file rather than Keychain.
-- Sessions use separate Git worktrees by default.
-- A direct-repository workspace mode requires a separate design and explicit selection.
+- Claude sessions use separate Git worktrees by default.
+- Native Codex sessions use the existing folder by default.
+  An isolated workspace requires explicit selection.
 
 ## Host resource visibility
 
@@ -43,11 +44,19 @@ The [resource policy](resource-visibility-policy.md) limits snapshots to Tethon-
 
 ## Agents and events
 
-- Claude Code is the production adapter. Other agent adapters remain planned.
+- Claude Code is the production adapter.
+- Native Codex supports the `0.163.x` protocol on Unix hosts.
+  Local checks used `0.163.0` on macOS. Deployment is still required.
 - Routine Claude `rate_limit_event` records are dropped.
 - A dedicated provider-notice event remains an open protocol decision.
 - Approved Claude tools emit `tool_result` with bounded and redacted payloads.
-- `diff_available` and broader non-Claude tool events remain planned.
+- Native Codex clients display native tool, plan, diff, and usage events.
+
+Native queue and permission-profile discovery use experimental app-server methods.
+Unsupported native requests remain visible but cannot be answered through Tethon.
+The local iOS simulator passed history, follow-up, Stop, draft recovery, and
+terminal-to-phone updates on one native thread.
+Physical-device notification delivery and keyboard checks remain unverified.
 
 ## Web access
 

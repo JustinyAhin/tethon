@@ -117,6 +117,16 @@ func (m *Manager) Create(ctx context.Context, opts CreateOptions) (Worktree, err
 // Remove deletes the worktree and its branch. Branch deletion is best-effort so
 // a partially-removed worktree still gets cleaned up.
 func (m *Manager) Remove(ctx context.Context, id string) error {
+	return m.remove(ctx, id, true)
+}
+
+// RemoveClean preserves dirty files and unmerged branches during explicit
+// native workspace cleanup. Legacy adapter cleanup keeps its existing policy.
+func (m *Manager) RemoveClean(ctx context.Context, id string) error {
+	return m.remove(ctx, id, false)
+}
+
+func (m *Manager) remove(ctx context.Context, id string, force bool) error {
 	m.mu.Lock()
 	rec, ok := m.live[id]
 	m.mu.Unlock()
@@ -131,22 +141,38 @@ func (m *Manager) Remove(ctx context.Context, id string) error {
 	}
 
 	if _, err := os.Stat(rec.wt.Path); err == nil {
-		if err := runGit(ctx, "-C", rec.repoPath, "worktree", "remove", "--force", rec.wt.Path); err != nil {
+		args := []string{"-C", rec.repoPath, "worktree", "remove"}
+		if force {
+			args = append(args, "--force")
+		}
+		args = append(args, rec.wt.Path)
+
+		if err := runGit(ctx, args...); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := runGit(ctx, "-C", rec.repoPath, "worktree", "prune"); err != nil {
-		return err
+
+	if force {
+		if err := runGit(ctx, "-C", rec.repoPath, "worktree", "prune"); err != nil {
+			return err
+		}
 	}
+
 	if rec.wt.Branch != "" {
-		_ = runGit(ctx, "-C", rec.repoPath, "branch", "-D", rec.wt.Branch)
+		deleteFlag := "-d"
+		if force {
+			deleteFlag = "-D"
+		}
+
+		_ = runGit(ctx, "-C", rec.repoPath, "branch", deleteFlag, rec.wt.Branch)
 	}
 
 	m.mu.Lock()
 	delete(m.live, id)
 	m.mu.Unlock()
+
 	return nil
 }
 

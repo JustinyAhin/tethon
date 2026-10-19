@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
@@ -133,6 +134,24 @@ type listSessionsOutput struct {
 	Body protocol.ListSessionsResponse
 }
 
+type agentModelsInput struct {
+	HostID string `path:"host_id"`
+	Agent  string `path:"agent"`
+}
+
+type agentModelsOutput struct {
+	Body protocol.ModelCatalog
+}
+
+type codexSettingsInput struct {
+	HostID string `path:"host_id"`
+	CWD    string `query:"cwd"`
+}
+
+type codexSettingsOutput struct {
+	Body protocol.CodexSettingsResponse
+}
+
 type createSessionInput struct {
 	Body protocol.CreateSessionRequest
 }
@@ -145,6 +164,37 @@ type createSessionOutput struct {
 type sessionPathInput struct {
 	HostID  string `path:"host_id"`
 	LocalID string `path:"local_id"`
+}
+
+type cancelSessionInput struct {
+	HostID  string `path:"host_id"`
+	LocalID string `path:"local_id"`
+	Body    *protocol.StopRequest
+}
+
+type codexSessionOutput struct {
+	Body protocol.CodexSessionResponse
+}
+
+type codexConversationsInput struct {
+	HostID string `path:"host_id"`
+	Cursor string `query:"cursor"`
+	Search string `query:"search"`
+}
+
+type codexConversationsOutput struct {
+	Body protocol.CodexConversationsResponse
+}
+
+type codexHistoryInput struct {
+	HostID  string `path:"host_id"`
+	LocalID string `path:"local_id"`
+	Cursor  string `query:"cursor"`
+	Limit   int    `query:"limit" default:"20" minimum:"1" maximum:"100"`
+}
+
+type codexHistoryOutput struct {
+	Body protocol.CodexHistoryResponse
 }
 
 type streamSessionInput struct {
@@ -166,6 +216,12 @@ type approvalInput struct {
 	Body      protocol.ResolveApprovalRequest
 }
 
+type codexRespondInput struct {
+	HostID  string `path:"host_id"`
+	LocalID string `path:"local_id"`
+	Body    protocol.CodexRespondRequest
+}
+
 type actionEventsOutput struct {
 	Status int `status:"202"`
 	Body   protocol.ActionEventsResponse
@@ -185,6 +241,38 @@ type repoRefsOutput struct {
 }
 
 func (s *Server) registerHumaRoutes(api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "getCodexSettings",
+		Method:      http.MethodGet,
+		Path:        "/hosts/{host_id}/agents/codex-cli/settings",
+		Summary:     "Read native Codex account, defaults, skills, and tool status",
+		Tags:        []string{"hosts"},
+		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.getCodexSettingsHuma)
+	huma.Register(api, huma.Operation{
+		OperationID: "listCodexConversations",
+		Method:      http.MethodGet,
+		Path:        "/hosts/{host_id}/agents/codex-cli/conversations",
+		Summary:     "List native Codex conversations on a host",
+		Tags:        []string{"sessions"},
+		Errors:      []int{http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.listCodexConversationsHuma)
+	huma.Register(api, huma.Operation{
+		OperationID: "getCodexHistory",
+		Method:      http.MethodGet,
+		Path:        "/sessions/{host_id}/{local_id}/history",
+		Summary:     "Read a page of native Codex turn history",
+		Tags:        []string{"sessions"},
+		Errors:      []int{http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.getCodexHistoryHuma)
+	huma.Register(api, huma.Operation{
+		OperationID: "listAgentModels",
+		Method:      http.MethodGet,
+		Path:        "/hosts/{host_id}/agents/{agent}/models",
+		Summary:     "List provider models available to an agent on a host",
+		Tags:        []string{"hosts"},
+		Errors:      []int{http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.listAgentModelsHuma)
 	huma.Register(api, huma.Operation{
 		OperationID:      "registerDevice",
 		Method:           http.MethodPost,
@@ -315,13 +403,34 @@ func (s *Server) registerHumaRoutes(api huma.API) {
 	}, s.resolveApprovalHuma)
 
 	huma.Register(api, huma.Operation{
-		OperationID:   "cancelSession",
-		Method:        http.MethodPost,
-		Path:          "/sessions/{host_id}/{local_id}/cancel",
-		Summary:       "Cancel an active session",
-		Tags:          []string{"sessions"},
-		DefaultStatus: http.StatusAccepted,
-		Errors:        []int{http.StatusBadGateway, http.StatusServiceUnavailable},
+		OperationID:      "respondCodexRequest",
+		Method:           http.MethodPost,
+		Path:             "/sessions/{host_id}/{local_id}/requests/respond",
+		Summary:          "Respond to a native Codex request using its exact result shape",
+		Tags:             []string{"sessions"},
+		DefaultStatus:    http.StatusAccepted,
+		SkipValidateBody: true,
+		Errors:           []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.respondCodexRequestHuma)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getCodexSession",
+		Method:      http.MethodGet,
+		Path:        "/sessions/{host_id}/{local_id}/native",
+		Summary:     "Read native Codex state and pending requests",
+		Tags:        []string{"sessions"},
+		Errors:      []int{http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
+	}, s.getCodexSessionHuma)
+
+	huma.Register(api, huma.Operation{
+		OperationID:      "cancelSession",
+		Method:           http.MethodPost,
+		Path:             "/sessions/{host_id}/{local_id}/cancel",
+		Summary:          "Cancel an active session",
+		Tags:             []string{"sessions"},
+		DefaultStatus:    http.StatusAccepted,
+		SkipValidateBody: true,
+		Errors:           []int{http.StatusBadGateway, http.StatusServiceUnavailable},
 	}, s.cancelSessionHuma)
 
 	huma.Register(api, huma.Operation{
@@ -347,6 +456,8 @@ func (s *Server) registerHumaRoutes(api huma.API) {
 		Tags:        []string{"repos"},
 		Errors:      []int{http.StatusNotFound, http.StatusBadGateway, http.StatusServiceUnavailable},
 	}, s.listRepoRefsHuma)
+
+	s.registerCodexLifecycle(api)
 }
 
 func (s *Server) registerDeviceHuma(ctx context.Context, input *registerDeviceInput) (*registerDeviceOutput, error) {
@@ -594,6 +705,53 @@ func (s *Server) listSessionsHuma(ctx context.Context, _ *struct{}) (*listSessio
 	return &listSessionsOutput{Body: protocol.ListSessionsResponse{Sessions: summaries}}, nil
 }
 
+func (s *Server) listAgentModelsHuma(ctx context.Context, input *agentModelsInput) (*agentModelsOutput, error) {
+	if _, ok := s.onlineHost(input.HostID); !ok {
+		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+
+	status, body, err := s.reverseRequestRaw(ctx, input.HostID, http.MethodGet, "/agents/"+url.PathEscape(input.Agent)+"/models", "", nil)
+	if err != nil {
+		return nil, reverseHumaError(err)
+	}
+	if status >= 300 {
+		return nil, newResponseError(status, body)
+	}
+
+	var catalog protocol.ModelCatalog
+	if err := json.Unmarshal(body, &catalog); err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+
+	return &agentModelsOutput{Body: catalog}, nil
+}
+
+func (s *Server) getCodexSettingsHuma(ctx context.Context, input *codexSettingsInput) (*codexSettingsOutput, error) {
+	if _, ok := s.onlineHost(input.HostID); !ok {
+		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+
+	query := url.Values{}
+	if input.CWD != "" {
+		query.Set("cwd", input.CWD)
+	}
+
+	status, body, err := s.reverseRequestRaw(ctx, input.HostID, http.MethodGet, "/agents/codex-cli/settings", query.Encode(), nil)
+	if err != nil {
+		return nil, reverseHumaError(err)
+	}
+	if status >= 300 {
+		return nil, newResponseError(status, body)
+	}
+
+	var settings protocol.CodexSettingsResponse
+	if err := json.Unmarshal(body, &settings); err != nil {
+		return nil, huma.Error502BadGateway("invalid native settings response")
+	}
+
+	return &codexSettingsOutput{Body: settings}, nil
+}
+
 func (s *Server) createSessionHuma(ctx context.Context, input *createSessionInput) (*createSessionOutput, error) {
 	req := input.Body
 	if req.HostID == "" {
@@ -666,8 +824,117 @@ func (s *Server) resolveApprovalHuma(ctx context.Context, input *approvalInput) 
 	return s.postAction(ctx, input.HostID, input.LocalID, "approvals/"+input.RequestID, input.Body)
 }
 
-func (s *Server) cancelSessionHuma(ctx context.Context, input *sessionPathInput) (*actionEventsOutput, error) {
-	return s.postAction(ctx, input.HostID, input.LocalID, "cancel", map[string]string{})
+func (s *Server) respondCodexRequestHuma(ctx context.Context, input *codexRespondInput) (*actionEventsOutput, error) {
+	if _, err := protocol.CodexRequestID(json.RawMessage(input.Body.RequestKey)); err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if input.Body.ConnectionID == "" || len(input.Body.Result) == 0 || !json.Valid(input.Body.Result) {
+		return nil, huma.Error400BadRequest("connection_id and a valid native result are required")
+	}
+
+	encoded, err := json.Marshal(input.Body)
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	if len(encoded) > protocol.MaxCodexPayloadBytes {
+		return nil, huma.Error400BadRequest(protocol.ErrCodexPayloadTooLarge.Error())
+	}
+
+	return s.postAction(ctx, input.HostID, input.LocalID, "requests/respond", input.Body)
+}
+
+func (s *Server) cancelSessionHuma(ctx context.Context, input *cancelSessionInput) (*actionEventsOutput, error) {
+	body := input.Body
+	if body == nil {
+		body = &protocol.StopRequest{}
+	}
+	return s.postAction(ctx, input.HostID, input.LocalID, "cancel", body)
+}
+
+func (s *Server) getCodexSessionHuma(ctx context.Context, input *sessionPathInput) (*codexSessionOutput, error) {
+	if _, ok := s.onlineHost(input.HostID); !ok {
+		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+
+	status, body, err := s.reverseRequestRaw(ctx, input.HostID, http.MethodGet, "/sessions/"+input.LocalID+"/native", "", nil)
+	if err != nil {
+		return nil, reverseHumaError(err)
+	}
+	if status >= 300 {
+		return nil, newResponseError(status, body)
+	}
+
+	var snapshot protocol.CodexSessionResponse
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	if snapshot.PendingRequests == nil {
+		snapshot.PendingRequests = []protocol.CodexRequestPayload{}
+	}
+
+	return &codexSessionOutput{Body: snapshot}, nil
+}
+
+func (s *Server) listCodexConversationsHuma(ctx context.Context, input *codexConversationsInput) (*codexConversationsOutput, error) {
+	if _, ok := s.onlineHost(input.HostID); !ok {
+		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+
+	query := url.Values{}
+	if input.Cursor != "" {
+		query.Set("cursor", input.Cursor)
+	}
+	if input.Search != "" {
+		query.Set("search", input.Search)
+	}
+
+	status, body, err := s.reverseRequestRaw(ctx, input.HostID, http.MethodGet, "/agents/codex-cli/conversations", query.Encode(), nil)
+	if err != nil {
+		return nil, reverseHumaError(err)
+	}
+	if status >= 300 {
+		return nil, newResponseError(status, body)
+	}
+
+	var response protocol.CodexConversationsResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	if response.Conversations == nil {
+		response.Conversations = []protocol.CodexConversation{}
+	}
+
+	return &codexConversationsOutput{Body: response}, nil
+}
+
+func (s *Server) getCodexHistoryHuma(ctx context.Context, input *codexHistoryInput) (*codexHistoryOutput, error) {
+	if _, ok := s.onlineHost(input.HostID); !ok {
+		return nil, huma.Error503ServiceUnavailable("host is offline or unknown")
+	}
+
+	query := url.Values{}
+	if input.Cursor != "" {
+		query.Set("cursor", input.Cursor)
+	}
+	query.Set("limit", strconv.Itoa(input.Limit))
+
+	status, body, err := s.reverseRequestRaw(ctx, input.HostID, http.MethodGet, "/sessions/"+input.LocalID+"/history", query.Encode(), nil)
+	if err != nil {
+		return nil, reverseHumaError(err)
+	}
+	if status >= 300 {
+		return nil, newResponseError(status, body)
+	}
+
+	var response protocol.CodexHistoryResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, huma.Error502BadGateway(err.Error())
+	}
+	if response.Turns == nil {
+		response.Turns = []protocol.CodexHistoryTurn{}
+	}
+
+	return &codexHistoryOutput{Body: response}, nil
 }
 
 func (s *Server) deleteSessionHuma(ctx context.Context, input *sessionPathInput) (*deleteSessionOutput, error) {

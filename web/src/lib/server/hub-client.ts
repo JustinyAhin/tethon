@@ -1,8 +1,11 @@
 import { HUB_AUTH_TOKEN } from '$app/env/private';
 import createClient from 'openapi-fetch';
+
 import type { paths, components } from '@tethon/hub-sdk/hub-openapi';
 import type { HostSummary, SessionSummary } from '$lib/types';
+import type { CodexRespondRequest } from '@tethon/hub-sdk/protocol';
 
+type InputRequest = components['schemas']['InputRequest'];
 type HubErrorBody = components['schemas']['HubStatusError'];
 type CreateSessionRequest = components['schemas']['CreateSessionRequest'];
 type ResolveApprovalRequest = components['schemas']['ResolveApprovalRequest'];
@@ -106,12 +109,17 @@ const createSession = async ({
 	return unwrap(await createHubClient(baseUrl).POST('/sessions', { body }));
 };
 
-const sendInput = async ({ baseUrl, id, text }: { baseUrl: string; id: string; text: string }) => {
+const sendInput = async ({
+	baseUrl,
+	id,
+	text,
+	...options
+}: { baseUrl: string; id: string } & InputRequest) => {
 	const path = sessionPath(id);
 	return unwrap(
 		await createHubClient(baseUrl).POST('/sessions/{host_id}/{local_id}/input', {
 			params: { path },
-			body: { text }
+			body: { text, ...options }
 		})
 	);
 };
@@ -136,13 +144,135 @@ const resolveApproval = async ({
 	);
 };
 
-const cancelSession = async ({ baseUrl, id }: { baseUrl: string; id: string }) => {
+const cancelSession = async ({
+	baseUrl,
+	id,
+	turn_id
+}: {
+	baseUrl: string;
+	id: string;
+	turn_id?: string;
+}) => {
 	const path = sessionPath(id);
 	return unwrap(
 		await createHubClient(baseUrl).POST('/sessions/{host_id}/{local_id}/cancel', {
-			params: { path }
+			params: { path },
+			body: turn_id ? { turn_id } : {}
 		})
 	);
+};
+
+const listAgentModels = async ({
+	baseUrl,
+	hostId,
+	agent
+}: {
+	baseUrl: string;
+	hostId: string;
+	agent: string;
+}) =>
+	unwrap(
+		await createHubClient(baseUrl).GET('/hosts/{host_id}/agents/{agent}/models', {
+			params: { path: { host_id: hostId, agent } }
+		})
+	);
+
+const listCodexConversations = async ({
+	baseUrl,
+	hostId,
+	cursor,
+	search
+}: {
+	baseUrl: string;
+	hostId: string;
+	cursor?: string;
+	search?: string;
+}) =>
+	unwrap(
+		await createHubClient(baseUrl).GET('/hosts/{host_id}/agents/codex-cli/conversations', {
+			params: { path: { host_id: hostId }, query: { cursor, search } }
+		})
+	);
+
+const getCodexSession = async ({ baseUrl, id }: { baseUrl: string; id: string }) =>
+	unwrap(
+		await createHubClient(baseUrl).GET('/sessions/{host_id}/{local_id}/native', {
+			params: { path: sessionPath(id) }
+		})
+	);
+
+const getCodexSettings = async ({
+	baseUrl,
+	hostId,
+	cwd
+}: {
+	baseUrl: string;
+	hostId: string;
+	cwd?: string;
+}) =>
+	unwrap(
+		await createHubClient(baseUrl).GET('/hosts/{host_id}/agents/codex-cli/settings', {
+			params: { path: { host_id: hostId }, query: { cwd } }
+		})
+	);
+
+const getCodexHistory = async ({
+	baseUrl,
+	id,
+	cursor
+}: {
+	baseUrl: string;
+	id: string;
+	cursor?: string;
+}) =>
+	unwrap(
+		await createHubClient(baseUrl).GET('/sessions/{host_id}/{local_id}/history', {
+			params: { path: sessionPath(id), query: { cursor, limit: 20 } }
+		})
+	);
+
+const respondCodexRequest = async ({
+	baseUrl,
+	id,
+	body
+}: {
+	baseUrl: string;
+	id: string;
+	body: CodexRespondRequest;
+}) =>
+	unwrap(
+		await createHubClient(baseUrl).POST('/sessions/{host_id}/{local_id}/requests/respond', {
+			params: { path: sessionPath(id) },
+			body
+		})
+	);
+
+type NativeAction = 'archive' | 'unarchive' | 'delete' | 'cleanup';
+
+const changeCodexConversation = async ({
+	baseUrl,
+	id,
+	action
+}: {
+	baseUrl: string;
+	id: string;
+	action: NativeAction;
+}) => {
+	const client = createHubClient(baseUrl);
+	const params = { path: sessionPath(id) };
+
+	switch (action) {
+		case 'archive':
+			return unwrap(await client.POST('/sessions/{host_id}/{local_id}/archive', { params }));
+		case 'unarchive':
+			return unwrap(await client.POST('/sessions/{host_id}/{local_id}/unarchive', { params }));
+		case 'delete':
+			return unwrap(await client.DELETE('/sessions/{host_id}/{local_id}/conversation', { params }));
+		case 'cleanup':
+			return unwrap(
+				await client.POST('/sessions/{host_id}/{local_id}/workspace/cleanup', { params })
+			);
+	}
 };
 
 const deleteSession = async ({ baseUrl, id }: { baseUrl: string; id: string }) => {
@@ -201,6 +331,13 @@ export {
 	listHosts,
 	listRepoRefs,
 	listSessions,
+	listAgentModels,
+	listCodexConversations,
+	getCodexSession,
+	getCodexSettings,
+	getCodexHistory,
+	respondCodexRequest,
+	changeCodexConversation,
 	openSessionStream,
 	resolveApproval,
 	sendInput

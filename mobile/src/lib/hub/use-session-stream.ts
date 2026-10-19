@@ -3,16 +3,15 @@ import { useFocusEffect } from 'expo-router';
 
 import { HubAuthError, HubRequestError } from '@/lib/hub/client';
 import { useAuth } from '@/lib/hub/auth-context';
-import {
-  loadSessionEvents,
-  saveSessionEvents,
-} from '@/lib/hub/event-storage';
+import { loadSessionEvents, saveSessionEvents } from '@/lib/hub/event-storage';
 import { openSessionStream } from '@/lib/hub/stream';
 import type { SessionEvent } from '@/lib/hub/types';
+import { dismissApprovalNotifications } from '@/lib/push/resolved';
 
 type UseSessionStreamArgs = {
   hostId: string;
   localId: string;
+  persistent?: boolean;
 };
 
 type StreamStatus = 'connecting' | 'live' | 'finished' | 'error';
@@ -25,9 +24,53 @@ type UseSessionStreamResult = {
 
 const reconnectDelayMs = 1000;
 
+const dismissResolvedEventNotification = ({
+  event,
+  hostId,
+  localId,
+}: {
+  event: SessionEvent;
+  hostId: string;
+  localId: string;
+}): void => {
+  if (
+    event.type !== 'approval_resolved' &&
+    event.type !== 'codex_request_resolved'
+  ) {
+    return;
+  }
+
+  if (typeof event.payload !== 'object' || event.payload === null) {
+    return;
+  }
+
+  const payload = event.payload as Record<string, unknown>;
+  let requestId: string;
+
+  if (event.type === 'codex_request_resolved') {
+    if (
+      typeof payload.request_key !== 'string' ||
+      typeof payload.connection_id !== 'string'
+    ) {
+      return;
+    }
+
+    requestId = `${payload.connection_id}:${payload.request_key}`;
+  } else {
+    if (typeof payload.request_id !== 'string') {
+      return;
+    }
+
+    requestId = payload.request_id;
+  }
+
+  void dismissApprovalNotifications({ hostId, sessionId: localId, requestId });
+};
+
 export const useSessionStream = ({
   hostId,
   localId,
+  persistent = false,
 }: UseSessionStreamArgs): UseSessionStreamResult => {
   const [events, setEvents] = useState<SessionEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -109,7 +152,8 @@ export const useSessionStream = ({
             0,
           );
           const storedDone = stored.some(
-            (event) => event.type === 'done' || event.type === 'error',
+            (event) =>
+              !persistent && (event.type === 'done' || event.type === 'error'),
           );
 
           seenRef.current = seen;
@@ -117,6 +161,10 @@ export const useSessionStream = ({
           doneRef.current = storedDone;
           setDone(storedDone);
           setEvents(stored);
+
+          for (const event of stored) {
+            dismissResolvedEventNotification({ event, hostId, localId });
+          }
         }
 
         hydratedRef.current = true;
@@ -175,8 +223,12 @@ export const useSessionStream = ({
               seenRef.current.add(event.seq);
               maxSeqRef.current = Math.max(maxSeqRef.current, event.seq);
               batch.push(event);
+              dismissResolvedEventNotification({ event, hostId, localId });
 
-              if (event.type === 'done' || event.type === 'error') {
+              if (
+                !persistent &&
+                (event.type === 'done' || event.type === 'error')
+              ) {
                 doneRef.current = true;
                 setDone(true);
               }
@@ -230,7 +282,7 @@ export const useSessionStream = ({
         stopped = true;
         controllerRef.current?.abort();
       };
-    }, [authStatus, hostId, invalidate, localId]),
+    }, [authStatus, hostId, invalidate, localId, persistent]),
   );
 
   useEffect(() => {

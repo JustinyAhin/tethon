@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"tethon/internal/protocol"
 )
 
@@ -76,6 +78,8 @@ func session(args []string) error {
 		return sessionInput(args[1:])
 	case "cancel":
 		return sessionCancel(args[1:])
+	case "attach":
+		return sessionAttach(args[1:])
 	case "approve":
 		return sessionApproval(args[1:], "approve")
 	case "deny":
@@ -108,6 +112,7 @@ func sessionStart(args []string) error {
 
 	var resp protocol.CreateSessionResponse
 	return postJSON(hubEndpoint(*hubURL, "/sessions"), *authToken, protocol.CreateSessionRequest{
+		RequestID:      uuid.NewString(),
 		HostID:         *hostID,
 		Repo:           *repo,
 		CWD:            *cwd,
@@ -159,7 +164,12 @@ func sessionInput(args []string) error {
 		return fmt.Errorf("usage: tethon session input <host_id/session_id> <text>")
 	}
 	var resp any
-	return postJSON(hubEndpoint(hubURL, "/sessions/"+rest[0]+"/input"), authToken, protocol.InputRequest{Text: strings.Join(rest[1:], " ")}, &resp, os.Stdout)
+	request := protocol.InputRequest{
+		Text:      strings.Join(rest[1:], " "),
+		RequestID: uuid.NewString(),
+	}
+
+	return postJSON(hubEndpoint(hubURL, "/sessions/"+rest[0]+"/input"), authToken, request, &resp, os.Stdout)
 }
 
 func sessionCancel(args []string) error {
@@ -308,6 +318,7 @@ func usage() error {
   tethon session stream <host_id/session_id> --from 0 [--hub-url <url>] [--auth-token <token>]
   tethon session input <host_id/session_id> <text> [--hub-url <url>] [--auth-token <token>]
   tethon session cancel <host_id/session_id> [--hub-url <url>] [--auth-token <token>]
+  tethon session attach <host_id/session_id> [--hub-url <url>] [--auth-token <token>] (run on the host)
   tethon session approve <host_id/session_id> <request_id> [--hub-url <url>] [--auth-token <token>]
   tethon session deny <host_id/session_id> <request_id> [--hub-url <url>] [--auth-token <token>]
 

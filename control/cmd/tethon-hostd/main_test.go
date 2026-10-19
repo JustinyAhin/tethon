@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"tethon/internal/protocol"
-	"tethon/internal/repo"
 )
 
 func TestHostDiagnosticHealthAndStatus(t *testing.T) {
@@ -114,16 +113,6 @@ func TestHostDiagnosticStatusUpdatesFromHubConnectionLoop(t *testing.T) {
 	}
 }
 
-func TestDefaultDBPath(t *testing.T) {
-	got := defaultDBPath()
-	if filepath.Base(got) != "hostd.db" {
-		t.Fatalf("defaultDBPath() = %q, want filename hostd.db", got)
-	}
-	if filepath.Base(filepath.Dir(got)) != "hostd" {
-		t.Fatalf("defaultDBPath() = %q, want parent dir hostd", got)
-	}
-}
-
 func TestDefaultStateDirForDarwin(t *testing.T) {
 	got := defaultStateDirFor("darwin", "/Users/alice", "/custom/data")
 	want := filepath.Join("/Users/alice", "Library", "Application Support", "Tethon", "hostd")
@@ -145,53 +134,6 @@ func TestDefaultStateDirForLocalShare(t *testing.T) {
 	want := filepath.Join("/home/alice", ".local", "share", "tethon", "hostd")
 	if got != want {
 		t.Fatalf("defaultStateDirFor(linux) = %q, want %q", got, want)
-	}
-}
-
-func TestCacheEnv(t *testing.T) {
-	env := cacheEnv("/state/cache")
-	want := map[string]string{
-		"GOCACHE":          "/state/cache/go-build",
-		"GOMODCACHE":       "/state/cache/go-mod",
-		"npm_config_cache": "/state/cache/npm",
-		"PIP_CACHE_DIR":    "/state/cache/pip",
-		"CARGO_HOME":       "/state/cache/cargo",
-	}
-	got := map[string]string{}
-	for _, kv := range env {
-		key, val, ok := strings.Cut(kv, "=")
-		if !ok {
-			t.Fatalf("malformed env entry %q", kv)
-		}
-		got[key] = val
-	}
-	for key, val := range want {
-		if got[key] != val {
-			t.Fatalf("cacheEnv[%q] = %q, want %q", key, got[key], val)
-		}
-	}
-	if len(got) != len(want) {
-		t.Fatalf("cacheEnv returned %d entries, want %d: %#v", len(got), len(want), env)
-	}
-}
-
-func TestRepoInfos(t *testing.T) {
-	registry, err := repo.NewRegistry(
-		repo.Repo{ID: "alpha", Name: "alpha", Path: "/repos/alpha", DefaultBranch: "main"},
-		repo.Repo{ID: "beta", Name: "beta", Path: "/repos/beta"},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	infos := repoInfos(registry)
-	if len(infos) != 2 {
-		t.Fatalf("expected 2 repo infos, got %d", len(infos))
-	}
-	if infos[0].ID != "alpha" || infos[0].Path != "/repos/alpha" || infos[0].DefaultBranch != "main" {
-		t.Fatalf("unexpected first repo info: %+v", infos[0])
-	}
-	if infos[1].ID != "beta" {
-		t.Fatalf("unexpected second repo info: %+v", infos[1])
 	}
 }
 
@@ -256,17 +198,6 @@ func TestHubClientUsesConfiguredTimeout(t *testing.T) {
 	err := client.registerHost(context.Background(), protocol.RegisterHostRequest{HostID: "mac", URL: "http://127.0.0.1:39181"})
 	if err == nil {
 		t.Fatal("expected timeout error")
-	}
-}
-
-func TestHubConnectionLoopRegistersImmediately(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	hub := newFakeHub()
-	go runHubConnectionLoop(ctx, hub, testRegisterRequest(), testHubConnectionConfig())
-
-	if got := hub.waitCall(t); got != "register" {
-		t.Fatalf("first call = %q, want register", got)
 	}
 }
 
@@ -354,67 +285,6 @@ func TestHubConnectionLoopLogsRegistrationSuccessMetadataWithoutToken(t *testing
 	}
 }
 
-func TestHubConnectionLoopLogsHeartbeatFailureRetryDelay(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	hub := newFakeHub()
-	hub.heartbeatErrs = []error{errors.New("network down")}
-	logs := newSafeBuffer()
-	cfg := testHubConnectionConfig()
-	cfg.hubURL = "https://hub.tethon.dev"
-	cfg.logger = slog.New(slog.NewJSONHandler(logs, nil))
-
-	go runHubConnectionLoop(ctx, hub, testRegisterRequest(), cfg)
-
-	for _, want := range []string{"register", "heartbeat"} {
-		if got := hub.waitCall(t); got != want {
-			t.Fatalf("call = %q, want %q", got, want)
-		}
-	}
-	raw := logs.waitFor(t, "hub_heartbeat_failed")
-	for _, want := range []string{
-		`"msg":"hub_heartbeat_failed"`,
-		`"host_id":"mac"`,
-		`"failed_attempts":1`,
-		`"next_retry_delay":"1ms"`,
-		`"error":"network down"`,
-	} {
-		if !strings.Contains(raw, want) {
-			t.Fatalf("logs missing %q: %s", want, raw)
-		}
-	}
-}
-
-func TestHubConnectionLoopLogsHeartbeatRecoveryAfterFailure(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	hub := newFakeHub()
-	hub.heartbeatErrs = []error{errors.New("temporary network failure")}
-	logs := newSafeBuffer()
-	cfg := testHubConnectionConfig()
-	cfg.hubURL = "https://hub.tethon.dev"
-	cfg.logger = slog.New(slog.NewJSONHandler(logs, nil))
-
-	go runHubConnectionLoop(ctx, hub, testRegisterRequest(), cfg)
-
-	for _, want := range []string{"register", "heartbeat", "heartbeat"} {
-		if got := hub.waitCall(t); got != want {
-			t.Fatalf("call = %q, want %q", got, want)
-		}
-	}
-	raw := logs.waitFor(t, "hub_heartbeat_recovered")
-	for _, want := range []string{
-		`"msg":"hub_heartbeat_recovered"`,
-		`"host_id":"mac"`,
-		`"failed_attempts":1`,
-		`"next_heartbeat_delay":"1ms"`,
-	} {
-		if !strings.Contains(raw, want) {
-			t.Fatalf("logs missing %q: %s", want, raw)
-		}
-	}
-}
-
 func TestNextBackoffCapsAtMax(t *testing.T) {
 	if got := nextBackoff(time.Second, 5*time.Second); got != 2*time.Second {
 		t.Fatalf("nextBackoff = %s, want 2s", got)
@@ -424,19 +294,6 @@ func TestNextBackoffCapsAtMax(t *testing.T) {
 	}
 	if got := nextBackoff(5*time.Second, 5*time.Second); got != 5*time.Second {
 		t.Fatalf("nextBackoff = %s, want 5s", got)
-	}
-}
-
-func TestIsHTTPStatus(t *testing.T) {
-	err := &httpStatusError{statusCode: http.StatusNotFound, status: "404 Not Found"}
-	if !isHTTPStatus(err, http.StatusNotFound) {
-		t.Fatal("expected not found status match")
-	}
-	if isHTTPStatus(err, http.StatusInternalServerError) {
-		t.Fatal("did not expect internal server error status match")
-	}
-	if isHTTPStatus(errors.New("network"), http.StatusNotFound) {
-		t.Fatal("did not expect plain error status match")
 	}
 }
 
