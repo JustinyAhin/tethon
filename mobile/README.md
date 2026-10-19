@@ -1,42 +1,26 @@
-# tethon mobile
+# Tethon mobile
 
-Expo (React Native) client for tethon — the primary surface for driving coding agents from a phone.
+Use the mobile app to control agent sessions from a phone.
+It uses Expo and React Native.
 
 ## Develop
 
-```bash
+Install dependencies from the repository root:
+
+```sh
 bun install
-bun start        # then press i / a / w for iOS / Android / web
 ```
 
-SDK 56 needs a dev build or a simulator (not Expo Go on a physical device). File-based routing lives in `src/app/`.
+Start the app from `mobile/`:
 
-## OTA updates
-
-The mobile app is configured for EAS Update through the linked Expo project
-`@segbedji/tethon`. The first dogfood phone build should use the release-like
-internal `preview` profile:
-
-```bash
-eas build --profile preview --platform ios
+```sh
+bun start
 ```
 
-Publish JS, TS, styling, and asset-only changes to the dogfood build with:
+Press `i`, `a`, or `w` for iOS, Android, or web.
+Use a development build or simulator with Expo SDK 56.
+Expo Go on a physical device is not supported by this setup.
+Routes are in `src/app/`.
 
-```bash
-eas update --branch preview --message "<message>" --environment preview
-```
-
-On `main`, GitHub Actions publishes this automatically when files under
-`mobile/` or `packages/hub-sdk/` change. The repository must have an
-`EXPO_TOKEN` Actions secret; keep that token out of hostd and Dokploy runtime
-environments so agent sessions cannot publish mobile updates directly.
-
-The preview app checks for updates on launch. To verify an update, force close
-and reopen the installed app up to two times; the downloaded update applies on
-the next launch.
-
-Native-affecting changes still require a new EAS build and reinstall. This
-includes new native modules, config plugins, bundle identity changes, push
-entitlement changes, native project edits, or any change that produces a new
-fingerprint runtime version.
+See [component rules](CLAUDE.md) for checks.
+See [mobile release operations](../kb/ci-deploy.md#mobile-ota) for preview builds, updates, and verification.

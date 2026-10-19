@@ -1,74 +1,56 @@
-# Known Limitations
+# Known limitations
 
-Last reviewed: 2026-06-29.
-
-This file tracks current implementation gaps that are easy to miss when reading
-the target design in `kb/agent-control-design.md`.
-
-## Networking
-
-- The host daemon registers outbound and keeps a host-initiated WebSocket open
-  to the hub for session operations. The hub does not need inbound reachability
-  to the Mac host daemon listener.
+Code reviewed: 2026-10-19. Deployed services were not tested in this review.
+See the [design](agent-control-design.md) for target behavior.
 
 ## Clients
 
-- The web and mobile clients both support the main session workflow.
-- The mobile app stores hub credentials in SecureStore, lists and starts
-  sessions, persists event streams, sends input, resolves approvals, and can
-  respond to approval push notifications.
-- The mobile client currently uses an internal EAS preview build rather than a
-  public app-store release.
-- Raw PTY/xterm terminal support is not implemented in web or mobile.
+- The mobile app uses an internal EAS preview build.
+- Raw PTY and xterm terminal views are not implemented.
+- Web and mobile have the main session, input, and approval workflows.
 
-## Session Replay
+## Session replay
 
-- The server-side protocol supports `seq > from` cursor replay.
-- The CLI exposes `--from`.
-- The web stream helper can pass a `from` value, but the current session page
-  starts streams from `0` and dedupes by `seq` in memory. It does not persist
-  the last cursor across reloads yet.
-- The mobile client persists session events and resumes from the last stored
-  cursor.
+The host protocol replays events where `seq > from`.
+The CLI exposes `--from`.
+The web page stores events with `PersistedState` and reconnects from the highest stored sequence number.
+The mobile app stores session events and resumes from its stored cursor.
+These code paths do not prove that every network and application-restart case has been tested.
 
-## Hub State
+## Hub state and networking
 
-- The hub host registry is in memory. Hosts re-register via retry/backoff, but
-  the hub does not persist registry/session index state across restarts yet.
-- The hub has unauthenticated `/healthz`; hostd has local `/healthz` and
-  `/status` diagnostics. These are process diagnostics, not a durable hub
-  registry or session index.
+The hub keeps host registrations and the session index in memory.
+Hosts register again after a hub restart.
+Push-device registrations persist in SQLite.
+Health endpoints do not prove durable registry or session recovery.
 
-## Host Daemon
+Hosts open outbound WebSocket connections to the hub.
+The hub needs no inbound access to host diagnostics.
+For deployment checks, use the [hub runbook](hub-deploy-dokploy.md#verify).
 
-- `caffeinate` while sessions are active is still planned.
-- macOS install/run is documented and scripted, but secret storage is an env
-  file, not Keychain.
-- Session isolation via per-session git worktrees remains the default. A
-  direct-repo mode may be useful for local single-session workflows, but it
-  should be added only as an explicit workspace mode with clear warnings about
-  modifying the main checkout.
+## Host daemon
 
-## Host Resource Visibility
+- Sleep prevention with `caffeinate` remains planned.
+- The Mac installation stores secrets in an environment file rather than Keychain.
+- Sessions use separate Git worktrees by default.
+- A direct-repository workspace mode requires a separate design and explicit selection.
 
-- Host resource visibility is planned as a read-only, Tethon-owned-resource
-  snapshot. It is not a general remote process manager.
-- The security/privacy policy for process, port, command, and path exposure is
-  documented in `kb/resource-visibility-policy.md`.
+## Host resource visibility
 
-## Agent Events
+The host daemon has read-only resource snapshot handlers.
+Hub relay and client views remain separate work.
+The [resource policy](resource-visibility-policy.md) limits snapshots to Tethon-owned resources and defines redaction requirements.
 
-- Routine Claude `rate_limit_event` records are dropped. A dedicated
-  notice/rate-limit event type remains a possible future protocol addition.
-- Claude approved tool executions emit first-class `tool_result` events with
-  bounded/redacted input and result payloads. `diff_available` and broader
-  non-Claude tool-use event coverage are target protocol ideas, not current
-  emitted events.
-- Claude Code is the only production agent adapter. Codex and other adapters
-  are planned.
+## Agents and events
 
-## Web Deployment
+- Claude Code is the production adapter. Other agent adapters remain planned.
+- Routine Claude `rate_limit_event` records are dropped.
+- A dedicated provider-notice event remains an open protocol decision.
+- Approved Claude tools emit `tool_result` with bounded and redacted payloads.
+- `diff_available` and broader non-Claude tool events remain planned.
 
-- The deployed web app can be gated by Cloudflare Access, but the hub itself
-  should not be placed behind Cloudflare Access yet. Current hub clients send
-  bearer-token auth, not Cloudflare Access service-token headers.
+## Web access
+
+Cloudflare Access can protect the web app.
+Keep it off the hub until clients send the required service-token headers.
+Current hub clients use bearer-token authentication.

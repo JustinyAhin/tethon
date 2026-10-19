@@ -1,293 +1,149 @@
-# Road to MVP
+# MVP milestones
 
-Last synced with Beads/code: 2026-06-29.
+This document defines scope and exit checks. Beads owns task status and dependencies.
+Use `bd epic status` for progress and `bd show <id>` for ticket details.
+See [known limitations](known-limitations.md) for current gaps.
 
 ## MVP definition
 
-The MVP is a usable remote coding-agent control loop:
+A user can control a real coding agent from a phone through the hub.
+The host owns session state and runs each session in a separate worktree.
+Clients can read output, send input, resolve approvals, and recover after connection loss.
+The web app can control the same sessions.
 
-- A host daemon runs on a Mac, registers with a hub, and owns session state.
-- A client can start a coding-agent session in a chosen repo/cwd, stream structured output, send input, and reconnect from a cursor without losing events.
-- Risky actions pause as approvals, and the user can approve, deny, or reply from the primary client.
-- At least one real agent works end to end.
-- The web companion is good enough to operate sessions from a laptop browser.
-- The mobile app is good enough for the core phone workflow: monitor, respond, approve, and recover from flaky network.
-
-Out of scope for MVP: raw PTY polish, multi-user teams, advanced repo browsing, full file management, Live Activities/Dynamic Island, and production-grade billing or account management.
+Raw terminal polish, multi-user accounts, advanced repository browsing, and general file management are outside MVP scope.
+Live Activities, Dynamic Island, billing, and account management are also outside MVP scope.
 
 ## Phase 0 — Protocol spike
 
-Status: done.
+Prove the append-only event log before adding real agents or clients.
 
-Goal: prove the append-only event log and cursor replay contract before building clients or real agent supervision.
+Required scope:
 
-Delivered:
+- SQLite session and event storage.
+- HTTP/SSE replay where `seq > from`.
+- CLI session, input, stream, and approval commands using the fake agent.
+- Ordering, persistence, replay, and approval tests.
 
-- Go control module under `control/`.
-- SQLite-backed session/event store.
-- HTTP/SSE stream with `seq > from` replay.
-- CLI commands for starting fake sessions, streaming, input, and approvals.
-- Tests for ordering, persistence, reconnect replay, and approval lifecycle.
-
-Exit check:
-
-- Start fake session, disconnect, append events, reconnect from last cursor, and receive only later events.
+Exit check: disconnect a fake session stream, append events, and reconnect from the last cursor.
+The stream returns only later events.
 
 ## Phase 1 — Host daemon and hub split
 
-Status: done.
+Tracker: `tethon-sgn`.
 
-Goal: prove the real architecture boundary: clients talk to one hub, but the host daemon owns session truth.
+- The host owns the session store and approvals.
+- The hub registers hosts, tracks heartbeats, and routes client requests.
+- Registrations include host identity, agent capabilities, and repositories.
+- The CLI connects only to the hub.
+- Cursor replay works through the relay.
 
-Deliver:
-
-- `cmd/tethon-hub`: host registry, client-facing session routes, stream relay.
-- `cmd/tethon-hostd`: owns SQLite session store, fake-agent sessions, and approval state.
-- Host registration with host id, hostname, available agents, and repo roots.
-- Heartbeats and online/offline host state in the hub.
-- CLI talks to hub only.
-- Preserve the same cursor replay behavior through the hub relay.
-
-Keep simple:
-
-- Local HTTP/SSE is fine for this phase.
-- Host can connect to hub over localhost first.
-- Fake agent remains the only agent.
-
-Exit check:
-
-- Start hub.
-- Start host daemon pointing at hub.
-- CLI creates a session through hub.
-- Hub routes to host daemon.
-- CLI streams through hub.
-- Restart the CLI and resume from cursor without duplicate events.
+Exit check: create and stream a session through the hub.
+Restart the CLI and resume without duplicate events.
+Local HTTP and the fake agent are sufficient for this milestone.
 
 ## Phase 2 — Real agent v0
 
-Status: done.
+Tracker: `tethon-19c`.
+See [adapter research](agent-adapter-research.md) for the original CLI observations.
 
-Goal: replace the fake agent with one real coding-agent backend while keeping the protocol stable.
+- Define an agent adapter interface.
+- Map real agent output to session events.
+- Supervise process start, input, exit, cancellation, and hard termination.
+- Select a working directory for each session.
+- Record process and stream errors.
 
-Deliver:
-
-- Agent adapter interface inside host daemon.
-- Claude Code adapter first, if current CLI supports the needed stream and permission surfaces.
-- Structured mapping from agent output into events: `output`, `awaiting_approval`, `done`, `error`.
-- Session process supervision: start, stdin/input, exit status, cancellation, hard kill.
-- Per-session working directory selection.
-- Basic logs for agent process lifecycle and stream parsing errors.
-
-Research before implementation:
-
-- Done in `kb/agent-adapter-research.md`.
-
-Exit check:
-
-- Start a real Claude Code session from the CLI.
-- See structured output over SSE.
-- Send user input.
-- Session exits with a `done` or `error` event.
-- Restart client mid-session and replay missed output from cursor.
+Exit check: start Claude Code, read output, send input, and receive `done` or `error`.
+Reconnect during the session and replay missed output.
 
 ## Phase 3 — Worktree isolation
 
-Status: done.
+Tracker: `tethon-zqe`.
 
-Goal: make parallel sessions safe by giving each session its own git worktree.
+- Register repositories with stable IDs, paths, and base references.
+- Create one worktree per session.
+- Support repository, branch, base-reference, and working-directory selection.
+- Share dependency caches outside worktrees.
+- Remove only owned worktrees under the cleanup policy.
 
-Deliver:
-
-- Repo registry on the host daemon: stable repo ids, display names, base paths.
-- Worktree manager per repo.
-- Session create chooses repo, branch/base ref, and cwd.
-- One session per worktree.
-- Cleanup policy for completed, failed, and killed sessions.
-- Guardrails to avoid deleting non-owned worktrees.
-- Disk hygiene: shared dependency/build caches where safe, generated-artifact cleanup, and no accidental per-worktree cache bloat.
-
-Exit check:
-
-- Start two sessions for the same repo concurrently.
-- Each runs in its own worktree.
-- Branch/file changes do not collide.
-- Killing one session does not affect the other.
-- Repeated short-lived sessions do not leave large generated artifacts or duplicated dependency caches behind.
+Exit check: run two sessions in one repository without file or branch collisions.
+Cancelling one session does not affect the other.
+Repeated sessions do not leave duplicate caches or unwanted generated files.
 
 ## Phase 4 — Web companion v0
 
-Status: partially done; Beads epic still open.
+Tracker: `tethon-bko`.
 
-Goal: validate the hub API with the fastest interactive client.
+- Show hosts, online state, session lists, and session details.
+- Start sessions with repository and working-directory selection.
+- Show structured events and resume from a stored cursor.
+- Send input and resolve Approve, Deny, and Reply actions.
+- Protect access for a single operator.
+- Support base references, branch defaults, and working-directory selection.
 
-Deliver:
-
-- SvelteKit app under `web/`.
-- Host list with online/offline state.
-- Repo/cwd/session start form.
-- Session list and session detail view.
-- Structured event stream UI with reconnect from cursor.
-- Input box for sending messages.
-- Approval cards with approve, deny, and reply.
-- Minimal auth suitable for solo use.
-
-Delivered so far:
-
-- SvelteKit app under `web/`.
-- Host list with online/offline state.
-- Repo/cwd/session start form.
-- Session list and session detail view.
-- Structured event stream UI.
-- Input box for sending messages.
-- Approval cards with approve, deny, and reply.
-- Solo auth path using Cloudflare Access for web plus hub bearer-token auth.
-
-Still open:
-
-- New-session form improvements for base refs, branch defaults, and cwd suggestions.
-- Hard verification of web reload/reconnect from a persisted cursor. The server supports cursor replay, but the current web page streams from `0` and dedupes in memory.
-
-Exit check:
-
-- From web, start a real agent session through the hub.
-- Disconnect/reload browser and recover stream from cursor.
-- Resolve an approval from the web UI.
+Exit check: start a real session, reload the page, recover events, and resolve an approval.
 
 ## Phase 5 — Mobile app v0
 
-Status: mostly not started; only scaffold is done.
+Tracker: `tethon-927`.
 
-Goal: make the phone workflow usable before adding push.
+- Authenticate against the hub.
+- Start or open sessions from the phone.
+- Show readable event streams and session details.
+- Send input and resolve approvals.
+- Store events and resume after an app restart.
 
-Deliver:
-
-- Expo app under `mobile/`.
-- Session list and detail screens.
-- Structured stream UI optimized for phone reading.
-- Send-message input.
-- Approval cards with approve, deny, reply.
-- Cursor persistence on device so app restarts resume cleanly.
-- Basic auth against hub.
-
-Delivered so far:
-
-- Expo app scaffold under `mobile/`.
-
-Still open:
-
-- Session list/detail screens.
-- Phone-optimized stream UI.
-- Send-message input.
-- Approval cards.
-- On-device cursor persistence.
-- Hub auth.
-
-Exit check:
-
-- From phone, start or open a session.
-- Background/kill/reopen the app and resume from last cursor.
-- Send input and resolve approval.
+Exit check: start or open a session, close the app, and resume from the stored cursor.
+Send input and resolve an approval.
 
 ## Phase 6 — Push approvals
 
-Status: not started.
+Tracker: `tethon-c1n`.
 
-Goal: make approvals work without opening the app.
+- Register devices and store push tokens.
+- Send approval notifications with sufficient decision context.
+- Support Approve, Deny, and Reply notification actions.
+- Send decisions through the hub to the authoritative host daemon.
+- Register the response listener at module scope.
+- Inspect the last notification response at startup.
 
-Deliver:
-
-- Hub push service integration for Expo notifications.
-- Device registration and token storage.
-- Interactive notification category: approve, deny, reply.
-- Notification payload carries enough context to decide safely.
-- Notification action sends intent to hub; host daemon resolves pending approval.
-- Mobile app registers notification-response listener at module top level and checks last notification response at startup.
-
-Exit check:
-
-- Real agent pauses for approval.
-- Phone receives an interactive notification.
-- Approve/deny/reply from lock screen.
-- Host daemon resolves the pending approval and the agent continues.
+Exit check: receive an approval notification for a real session.
+Resolve it from the lock screen and confirm that the agent continues.
 
 ## Phase 7 — MVP hardening
 
-Status: partially done; Beads epic still open.
+Tracker: `tethon-1a5`.
 
-Goal: make the solo-developer MVP reliable enough to use while away from the Mac.
+- Provide macOS installation and VPS deployment procedures.
+- Keep active sessions awake on macOS.
+- Support token rotation across the hub, hosts, web, mobile, and CLI.
+- Preserve the required host and session index across hub restarts.
+- Provide health checks, useful logs, and actionable errors.
+- Retry host registration and reconnect after failures.
 
-Deliver:
-
-- Host daemon install/run story for macOS.
-- `caffeinate` while sessions are active.
-- Basic auth/token rotation for hub, host daemon, web, and mobile.
-- Hub deployment instructions for a small VPS.
-- Persistent hub registry for hosts and sessions.
-- Structured logs and useful error messages.
-- Health endpoints for hub and host daemon.
-- Basic retry/backoff for host-to-hub connection.
-
-Delivered so far:
-
-- macOS LaunchAgent install/run story for `tethon-hostd`.
-- Stable app-data paths for hostd state, worktrees, and shared caches.
-- Basic auth/token rotation for hub, host daemon, web, and CLI.
-- Retry/backoff for host registration and heartbeat.
-- Dokploy hub deploy runbook exists in `kb/hub-deploy-dokploy.md`.
-
-Still open:
-
-- `caffeinate` while sessions are active.
-- Persistent hub registry for hosts and sessions.
-- More complete structured logs and useful error messages.
-- Host daemon health endpoint.
-- Mobile auth.
-
-Exit check:
-
-- Fresh Mac can install and register host daemon.
-- Hub survives restart and hosts reconnect.
-- Active sessions keep running if clients disconnect.
-- Mobile and web can recover session state after network interruption.
+Exit check: install a host on a fresh Mac and register it.
+Restart the hub and confirm that hosts reconnect.
+Confirm that agents continue during client disconnection and that clients recover afterward.
 
 ## Phase 8 — MVP release candidate
 
-Status: open.
+Tracker: `tethon-jrl`.
 
-Goal: freeze the minimum product and use it for real work.
+- Maintain the [first-session guide](first-remote-agent-session.md).
+- Use the same hub API from web and mobile.
+- Support real output, input, terminal events, and approvals.
+- Keep worktree isolation enabled by default.
+- Cover replay, relay, approval, and cleanup failures with regression tests.
+- Maintain [known limitations](known-limitations.md).
 
-Deliver:
-
-- One documented happy path from install to first remote agent session.
-- Web and mobile both operate the same hub API.
-- Real agent sessions support output, input, done/error, and approvals.
-- Worktree isolation is on by default.
-- Regression tests for protocol replay, hub relay, approval lifecycle, and worktree cleanup.
-- Known limitations documented in `kb/known-limitations.md`.
-
-Delivered so far:
-
-- First remote `claude-cli` session runbook in `kb/first-remote-agent-session.md`.
-- Known limitations document.
-
-Still open:
-
-- Web and mobile client parity.
-- Mobile-away-from-Mac release-candidate exit check.
-- Final regression/limitations pass once mobile and push are implemented.
-
-Exit check:
-
-- Start a session from mobile while away from the Mac.
-- Agent runs on the Mac in an isolated worktree.
-- User can monitor, reply, approve/deny, and recover after network loss.
-- Same session is visible and controllable from web.
+Exit check: start a session from the phone while away from the Mac.
+Read output, send input, resolve approvals, and recover after connection loss.
+Control the same session from the web app.
 
 ## Cross-cutting rules
 
-- Do not weaken cursor replay. Every client-facing stream must support reconnect from last seen event.
-- Keep daemon-owned state authoritative. Clients and push handlers send intents; they do not own session state.
-- Keep raw terminal as an escape hatch, not the core workflow.
-- Prefer structured events over terminal scraping.
-- Add real complexity only after the previous phase is working end to end.
-- When changing event JSON or database schema, add replay and persistence tests in the same change.
+- Keep host-owned state authoritative.
+- Preserve cursor replay on every client-facing stream.
+- Prefer structured events over terminal parsing.
+- Prove each milestone before adding the next layer of complexity.
+- Protect event and schema changes with replay and persistence tests.

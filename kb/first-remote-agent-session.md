@@ -1,180 +1,66 @@
-# First Remote Agent Session
+# First remote agent session
 
-This is the current happy path from install to a first remote `claude-cli`
-session running on a Mac host. It uses the hub, the macOS host daemon, and the
-web companion. The mobile client supports the same main session workflow after
-it has been connected to the hub through an internal preview build.
-
-For current gaps that affect this path, see `kb/known-limitations.md`.
+Use this guide to run Claude Code on a Mac from the web app.
+The [mobile app](../mobile/README.md) can control the same sessions.
+See [known limitations](known-limitations.md) before deployment.
 
 ## Prerequisites
 
-- A hub deployed at a public HTTPS URL, for example `https://hub.tethon.dev`.
-- The hub bearer token configured as `TETHON_HUB_AUTH_TOKEN`.
-- Go and Bun installed where you run the repo tools.
-- Claude Code installed and authenticated on the Mac:
-
-  ```sh
-  claude auth status --text
-  ```
-
-- A git repo or repo root on the Mac that `tethon-hostd` should advertise.
-
-Do not put the hub behind Cloudflare Access yet. The current clients send the
-hub bearer token, not Cloudflare Access service-token headers.
+- Go and Bun installed.
+- A deployed HTTPS hub and an accepted bearer token.
+- A Mac with Claude Code installed and authenticated.
+- A Git repository on the Mac.
 
 ## 1. Verify the hub
 
-From any machine that can reach the hub:
-
-```sh
-curl -fsS https://hub.tethon.dev/healthz
-```
-
-Then verify authenticated access:
-
-```sh
-export TETHON_HUB_AUTH_TOKEN='<same-token-as-the-hub>'
-curl -fsS \
-  -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" \
-  https://hub.tethon.dev/hosts
-```
-
-Expected result before the Mac daemon registers:
-
-```json
-{"hosts":[]}
-```
+Complete [hub setup and verification](hub-deploy-dokploy.md#verify).
+Keep the hub outside Cloudflare Access until clients support its service-token headers.
 
 ## 2. Install the Mac host daemon
 
-On the Mac, from the repo root:
+Follow [Mac installation](macos-host-daemon.md#install) and [host verification](macos-host-daemon.md#verify).
+The host must appear online with `claude-cli` and the target repository.
+Use [host troubleshooting](macos-host-daemon.md#troubleshooting) if a check fails.
 
-```sh
-scripts/macos-hostd.sh install \
-  --hub-url https://hub.tethon.dev \
-  --addr 127.0.0.1:39181 \
-  --repo-root /path/to/repos \
-  --name "$(hostname -s)"
-```
+## 3. Start the web companion
 
-Add the hub token to:
+Follow [web setup](../web/README.md#develop).
+Use the hub URL and an accepted hub token.
+Open the local URL printed by Vite.
+Confirm that the Hosts page shows the Mac online.
 
-```txt
-~/.config/tethon/hostd.env
-```
+## 4. Start a session
 
-Use this shape:
-
-```sh
-TETHON_HUB_AUTH_TOKEN=<same-token-as-the-hub>
-```
-
-Restart the daemon after editing the config:
-
-```sh
-scripts/macos-hostd.sh restart
-```
-
-Check status and logs:
-
-```sh
-scripts/macos-hostd.sh status
-scripts/macos-hostd.sh logs
-scripts/macos-hostd.sh doctor
-```
-
-Look for `host_registered` in the hostd logs. It should include the expected
-`hub_url`, `host_id`, `advertised_url`, and `repo_count`. If registration or
-heartbeat fails, the log line includes `error` and `next_retry_delay`.
-
-The doctor checks launchd, local hostd `/healthz` and `/status`, hub `/healthz`,
-token presence, and whether the host appears online through the hub when a token
-is configured.
-
-Session operations use the host daemon's outbound WebSocket to the hub. The
-hub does not need to reach the local diagnostics listener.
-
-## 3. Confirm the host is online
-
-From `control/`:
-
-```sh
-export TETHON_HUB_AUTH_TOKEN='<same-token-as-the-hub>'
-go run ./cmd/tethon hosts list --hub-url https://hub.tethon.dev
-```
-
-Expected result:
-
-- the Mac host appears with `online: true`
-- `agents` includes `claude-cli`
-- `repos` includes the target repository
-
-If `claude-cli` is missing, confirm `claude` is on the PATH seen by launchd and
-restart the daemon. If the host is missing or offline, check the token and
-`scripts/macos-hostd.sh logs`.
-
-## 4. Start the web companion
-
-From `web/`:
-
-```sh
-export HUB_BASE_URL='https://hub.tethon.dev'
-export HUB_AUTH_TOKEN='<same-token-as-the-hub>'
-bun install
-bun run dev
-```
-
-Open the local URL printed by Vite, then verify the Hosts page shows the Mac as
-online.
-
-## 5. Start the first remote session
-
-In the web companion:
-
-1. Open `Sessions` -> `New session`.
+1. Open `Sessions` → `New session`.
 2. Select the Mac host.
-3. Select the target repo.
-4. Choose `claude-cli` as the agent.
-5. Optionally set `cwd`, `branch`, or `base_ref`.
-6. Enter a prompt, for example:
+3. Select the repository.
+4. Select `claude-cli`.
+5. Set `cwd`, `branch`, or `base_ref` if needed.
+6. Enter this prompt:
 
    ```txt
    Inspect this repo and summarize the current test command. Do not edit files.
    ```
 
-7. Submit the form and open the created session.
+7. Submit the form.
+8. Open the session.
 
-The session page should show `session_started`, streamed output, usage, and a
-terminal `done` or `error` event. The agent process runs on the Mac, inside a
-per-session worktree under:
+Expected result: `session_started`, agent output, usage, and a terminal `done` or `error` event.
+The agent runs in a worktree under the [host state directory](macos-host-daemon.md#paths).
 
-```txt
-~/Library/Application Support/Tethon/hostd/worktrees
-```
+## 5. Operate and reconnect
 
-## 6. Operate the session
+Use the session page to send follow-up input.
+Press Enter to send. Use Shift+Enter for a newline.
+For a pending approval, select Approve, Deny, or Reply.
+The host daemon owns the pending state.
 
-Use the session detail page to send follow-up input. Press Enter to send, or
-Shift+Enter for a newline.
-
-If the agent emits an approval request, the web page shows an approval card with
-Approve, Deny, and Reply actions. The daemon owns the pending approval state;
-the web client only sends the chosen intent back through the hub.
-
-Reloading the session page should replay missed events from the session log
-instead of depending on a live-only socket.
+Reload the page during an active session.
+Expected result: stored events remain visible and the stream resumes from the last cursor.
 
 ## CLI fallback
 
-The CLI can drive the same hub API when the web UI is not enough.
-
-List hosts:
-
-```sh
-go run ./cmd/tethon hosts list \
-  --hub-url https://hub.tethon.dev
-```
+Run these commands from `control/` with `TETHON_HUB_AUTH_TOKEN` set to an accepted token.
 
 Start a session:
 
@@ -187,7 +73,7 @@ go run ./cmd/tethon session start \
   --prompt "Inspect this repo and summarize the current test command. Do not edit files."
 ```
 
-Stream events from the beginning:
+Read events from the beginning:
 
 ```sh
 go run ./cmd/tethon session stream \
@@ -214,29 +100,12 @@ go run ./cmd/tethon session approve \
   <request-id>
 ```
 
-Use `deny` or `reply <request-id> <text>` instead of `approve` when appropriate.
+Use `deny` to reject the request.
+Use `reply <request-id> <text>` to send a text decision.
 
 ## Troubleshooting
 
-- `401 Unauthorized`: the hub token does not match between hub, host, web, or
-  CLI environment.
-- Host missing from `/hosts`: check `scripts/macos-hostd.sh status` and
-  `scripts/macos-hostd.sh doctor`. Common causes are a stopped LaunchAgent, a
-  missing token in `~/.config/tethon/hostd.env`, or hostd being unable to reach
-  the hub.
-- Host appears but is offline: heartbeats are not reaching the hub. Check
-  hostd logs for `hub_heartbeat_failed`, the retry delay, Mac sleep/network
-  state, and hub logs for `hub_host_heartbeat`.
-- Host online but sessions fail: check `hub_reverse_connected` in the host
-  logs, then confirm the repository is registered.
-- Host online but session list/start returns `502`: check the hub and hostd
-  logs for a dropped reverse WebSocket or a rejected session operation.
-- Local daemon status unclear: query hostd directly with
-  `curl -fsS http://127.0.0.1:39181/status` and check `registered`,
-  `retrying`, `last_hub_success`, and `last_hub_failure`.
-- `unknown agent`: `claude` was not available to `tethon-hostd` when it started.
-- `prompt is required for claude-cli sessions`: start real Claude sessions with
-  a non-empty prompt.
-- `claude-cli refuses to run while ANTHROPIC_API_KEY is set`: unset the API key
-  for subscription-backed Claude Code use, or install hostd with
-  `--allow-anthropic-api-key` if that is intentional.
+For host, authentication, or agent errors, use [host troubleshooting](macos-host-daemon.md#troubleshooting).
+For token changes, follow [token rotation](hub-deploy-dokploy.md#token-rotation).
+For web stream failures, inspect the browser request and Worker logs.
+The [dated stream research](cloudflare-durable-objects-research.md) records the earlier Worker relay failure.

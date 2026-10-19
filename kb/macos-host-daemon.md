@@ -1,26 +1,24 @@
-# macOS Host Daemon
+# macOS host daemon
 
-This is the current install/run story for running `tethon-hostd` as a user
-LaunchAgent on a Mac.
+Run `tethon-hostd` as a user LaunchAgent on a Mac.
+Run script commands from the repository root.
 
 ## Prerequisites
 
-- A deployed hub, for example `https://hub.tethon.dev`.
-- The same hub bearer token configured on the hub as `TETHON_HUB_AUTH_TOKEN`.
-- Go installed on the Mac.
-- A repo root that `tethon-hostd` should advertise. This may be either a git
-  repository or a workspace parent whose immediate children are git
-  repositories.
-- A local listener address for host diagnostics, for example
-  `127.0.0.1:39181`.
+- A deployed HTTPS hub and an accepted bearer token.
+- Go and Claude Code installed.
+- A Git repository or a parent directory containing repositories.
 
-The hub routes session operations over a host-initiated WebSocket, so the hub
-does not need to reach the `--addr` listener. Keep `--addr` bound to a local or
-private interface unless you intentionally want remote diagnostics.
+Confirm Claude Code authentication:
+
+```sh
+claude auth status --text
+```
+
+The daemon opens an outbound WebSocket to the hub.
+Keep its diagnostics listener on a local or private interface.
 
 ## Install
-
-From the repo root on the Mac:
 
 ```sh
 scripts/macos-hostd.sh install \
@@ -30,154 +28,99 @@ scripts/macos-hostd.sh install \
   --name "$(hostname -s)"
 ```
 
-`--repo-root` may point at one git repository or at a workspace parent such as
-`~/work/projects`; hostd discovers git repositories in the parent directory's
-immediate children and ignores non-repo children.
+`--repo-root` accepts one repository or a parent directory.
+For a parent directory, the daemon registers immediate child repositories.
 
-The script:
-
-- builds `control/cmd/tethon-hostd` to `~/.local/bin/tethon-hostd`
-- creates `~/Library/Application Support/Tethon/hostd/`
-- creates `~/.config/tethon/hostd.env` with `0600` permissions if missing
-- writes `~/Library/LaunchAgents/dev.tethon.hostd.plist`
-- bootstraps and starts the LaunchAgent
-
-Then add the hub token to:
-
-```txt
-~/.config/tethon/hostd.env
-```
-
-Use this shape:
+The script builds `~/.local/bin/tethon-hostd`, writes the LaunchAgent, and starts it.
+It creates the state directory and a protected token file if needed.
+Set the accepted hub token in `~/.config/tethon/hostd.env`:
 
 ```sh
 TETHON_HUB_AUTH_TOKEN=<same-token-as-the-hub>
 ```
 
-Do not commit this file. After editing it, restart the daemon:
+Keep this file out of Git.
+Restart after setting the token:
 
 ```sh
 scripts/macos-hostd.sh restart
 ```
 
-When rotating the hub token, update this file after the new token has been
-added to the hub's accepted token list. See `kb/hub-deploy-dokploy.md`.
+Expected result: the host registers and opens its reverse WebSocket connection.
+Follow [verification](#verify) before starting a session.
+For token replacement, follow [hub token rotation](hub-deploy-dokploy.md#token-rotation).
 
 ## Operate
 
-Check launchd status:
+| Action                            | Command                            |
+| --------------------------------- | ---------------------------------- |
+| Check LaunchAgent state           | `scripts/macos-hostd.sh status`    |
+| Follow both daemon logs           | `scripts/macos-hostd.sh logs`      |
+| Check local and hub connectivity  | `scripts/macos-hostd.sh doctor`    |
+| Restart the daemon                | `scripts/macos-hostd.sh restart`   |
+| Remove the LaunchAgent and binary | `scripts/macos-hostd.sh uninstall` |
+
+The doctor reports `PASS`, `WARN`, or `FAIL` for launchd, processes, listeners, logs, and hub connectivity.
+It checks token presence without printing the token.
+
+Query local diagnostics:
 
 ```sh
-scripts/macos-hostd.sh status
+curl -fsS http://127.0.0.1:39181/healthz
+curl -fsS http://127.0.0.1:39181/status
 ```
 
-Follow logs:
+`/status` includes host identity, repositories, registration, retries, and reverse connection state.
+It excludes tokens and environment file contents.
 
-```sh
-scripts/macos-hostd.sh logs
-```
+After code changes, reinstall with the same arguments before restarting.
+Uninstall preserves state, configuration, and logs.
 
-This tails both LaunchAgent log files:
+## Verify
 
-```txt
-~/Library/Logs/Tethon/hostd.log
-~/Library/Logs/Tethon/hostd.err.log
-```
-
-Useful hostd log events:
-
-- `host_registered`: registration reached the hub. Check `hub_url`,
-  `host_id`, `advertised_url`, `repo_count`, and `agent_count`.
-- `host_registration_failed`: hostd could not register. Check `error` and
-  `next_retry_delay`.
-- `hub_heartbeat_failed`: hostd registered before, but heartbeat failed. Check
-  the hub URL, token, network route, and `next_retry_delay`.
-- `hub_heartbeat_recovered`: heartbeat recovered after one or more failures.
-- `hub_reverse_connected`: hostd established the outbound session-operation
-  tunnel to the hub.
-- `hub_reverse_connect_failed` / `hub_reverse_disconnected`: hostd could not
-  establish or maintain the outbound tunnel.
-- `hostd_serving`: confirms the local diagnostic listener.
-
-Run the local doctor:
-
-```sh
-scripts/macos-hostd.sh doctor
-```
-
-The doctor prints `PASS`, `WARN`, and `FAIL` checks for launchd state, the
-configured listener, stale manual `tethon-hostd` processes, recent logs, local
-hostd `/healthz` and `/status`, hub `/healthz`, token presence, and whether the
-host appears online through authenticated hub `/hosts` when a token is present.
-It does not print token values.
-
-The host daemon also exposes local diagnostics on its configured listener:
-
-```sh
-curl -fsS http://<mac-tailscale-ip>:39181/healthz
-curl -fsS http://<mac-tailscale-ip>:39181/status
-```
-
-`/status` includes the host id, advertised URL, hub URL, registered repo names,
-uptime, last hub success/failure, retry state, and reverse connection state. It
-does not include bearer tokens or environment file contents.
-
-Restart after changing config or reinstalling:
-
-```sh
-scripts/macos-hostd.sh restart
-```
-
-Uninstall the LaunchAgent and installed binary:
-
-```sh
-scripts/macos-hostd.sh uninstall
-```
-
-Uninstall leaves state, config, and logs in place:
-
-- `~/Library/Application Support/Tethon/hostd/`
-- `~/.config/tethon/hostd.env`
-- `~/Library/Logs/Tethon/`
-
-## Smoke Test
-
-From `control/`, list hosts through the hub:
+From `control/`, run:
 
 ```sh
 export TETHON_HUB_AUTH_TOKEN='<same-token-as-the-hub>'
 go run ./cmd/tethon hosts list --hub-url https://hub.tethon.dev
 ```
 
-The installed Mac should appear with `online: true`. If it does not, check:
+Expected result:
 
-- `scripts/macos-hostd.sh doctor`
-- `scripts/macos-hostd.sh logs`
-- the token in `~/.config/tethon/hostd.env`
-- that logs show `hub_reverse_connected`
-- that the repo root exists and contains git repositories
+- The host has `online: true`.
+- Its agent list includes `claude-cli`.
+- Its repository list includes the intended repository.
 
-Common causes:
+The host log should include `host_registered` and `hub_reverse_connected`.
 
-- `401 Unauthorized` or repeated `host_registration_failed`: the host token does
-  not match the hub's accepted bearer token.
-- Host is missing from `/hosts`: the LaunchAgent is not running, the wrapper
-  cannot start `tethon-hostd`, or hostd cannot reach the hub.
-- Host appears but is offline: the reverse WebSocket is disconnected, the Mac
-  slept, the network changed, or the daemon restarted and is still reconnecting.
-- Host is online but session operations fail: check `hub_reverse_disconnected`
-  and hostd session logs for the failed operation.
+## Troubleshooting
+
+| Result                                                     | Check                                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `401 Unauthorized` or `host_registration_failed`           | Confirm that the host token matches a hub-accepted token.                       |
+| Host missing from `/hosts`                                 | Check LaunchAgent state, the wrapper, the token, and outbound hub access.       |
+| Host offline                                               | Check Mac sleep, network access, heartbeat errors, and reverse connection logs. |
+| Session request returns `502`                              | Check hub logs and `hub_reverse_disconnected` or `hub_reverse_connect_failed`.  |
+| Host online but session fails                              | Confirm repository registration and inspect the session error.                  |
+| `unknown agent`                                            | Confirm that `claude` is on the PATH available to launchd. Restart the daemon.  |
+| `prompt is required for claude-cli sessions`               | Supply a non-empty prompt.                                                      |
+| `claude-cli refuses to run while ANTHROPIC_API_KEY is set` | Remove the API key for subscription-backed use.                                 |
+
+Use `--allow-anthropic-api-key` only when API-key use is intentional.
+Inspect `error` and `next_retry_delay` after registration or heartbeat failures.
+`hub_heartbeat_recovered` confirms recovery. `hostd_serving` confirms the diagnostics listener.
 
 ## Paths
 
-`tethon-hostd` defaults its macOS SQLite state to:
+| Data          | Path                                                   |
+| ------------- | ------------------------------------------------------ |
+| Binary        | `~/.local/bin/tethon-hostd`                            |
+| LaunchAgent   | `~/Library/LaunchAgents/dev.tethon.hostd.plist`        |
+| Token file    | `~/.config/tethon/hostd.env`                           |
+| Database      | `~/Library/Application Support/Tethon/hostd/hostd.db`  |
+| Worktrees     | `~/Library/Application Support/Tethon/hostd/worktrees` |
+| Shared caches | `~/Library/Application Support/Tethon/hostd/cache`     |
+| Standard log  | `~/Library/Logs/Tethon/hostd.log`                      |
+| Error log     | `~/Library/Logs/Tethon/hostd.err.log`                  |
 
-```txt
-~/Library/Application Support/Tethon/hostd/hostd.db
-```
-
-The LaunchAgent wrapper passes explicit paths for:
-
-- `-db ~/Library/Application Support/Tethon/hostd/hostd.db`
-- `-worktree-root ~/Library/Application Support/Tethon/hostd/worktrees`
-- `-cache-root ~/Library/Application Support/Tethon/hostd/cache`
+The LaunchAgent wrapper passes explicit database, worktree, and cache paths.

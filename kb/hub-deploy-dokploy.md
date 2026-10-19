@@ -1,296 +1,164 @@
-# Hub Deploy With Dokploy
+# Hub deployment with Dokploy
 
-This is the preferred deployment path when Dokploy already runs on the VPS. The
-hub is deployed as a Docker Compose service, and Dokploy handles the public
-domain, HTTPS, reverse proxying, logs, and redeploys.
+Deploy `tethon-hub` as a Docker Compose service on the VPS.
+Dokploy provides the public domain, HTTPS, proxy, and logs.
+Use [CI operations](ci-deploy.md) for image publishing, redeployment, and rollback.
 
-## Shape
+## Prerequisites
 
-```txt
-https://hub.tethon.dev
-  -> Dokploy domain routing
-  -> hub compose service, port 39180
-  -> tethon-hub
-```
+- Dokploy on the VPS.
+- DNS access for `hub.tethon.dev`.
+- Registry access if the GHCR image is private.
 
-You do not need the Caddy setup for this path. Dokploy already provides the
-reverse proxy/domain layer for Compose services.
+Keep the hub outside Cloudflare Access until clients support its service-token headers.
+Cloudflare DNS proxying can remain enabled.
 
-The hub API still uses `TETHON_HUB_AUTH_TOKEN` bearer auth. Do not put
-`hub.tethon.dev` behind Cloudflare Access yet unless the web Worker, host
-daemon, and CLI are updated to send Cloudflare Access service-token headers.
+## Dokploy setup
 
-Cloudflare DNS proxying is fine. Cloudflare Access is the part to avoid for the
-hub for now.
+1. Point the domain's `A` record at the VPS.
+2. Add an `AAAA` record if the VPS has IPv6.
+3. Create a Compose service with these settings:
 
-## Files
+   | Setting        | Value                           |
+   | -------------- | ------------------------------- |
+   | Source         | This GitHub repository          |
+   | Branch         | `main`                          |
+   | Compose type   | Docker Compose                  |
+   | Compose path   | `deploy/hub/docker-compose.yml` |
+   | Domain         | `hub.tethon.dev`                |
+   | Service        | `hub`                           |
+   | Container port | `39180`                         |
+   | HTTPS          | Enabled                         |
 
-- `deploy/hub/Dockerfile` - builds the `tethon-hub` binary into a small image.
-- `deploy/hub/docker-compose.yml` - Dokploy Compose service with the persistent
-  `hub-data` volume mounted at `/var/lib/tethon`. It defaults to the
-  `ghcr.io/justinyahin/tethon-hub:main` image published by CI.
-- `kb/ci-deploy.md` - CI image publishing, Dokploy API, and rollback notes.
-
-## Dokploy Setup
-
-1. Point DNS at the VPS.
-
-   Create an `A` record:
-
-   ```txt
-   hub.tethon.dev -> <vps-ipv4>
-   ```
-
-   Add an `AAAA` record too if the VPS has IPv6.
-
-2. Create a Dokploy project/service.
-
-   In Dokploy:
-
-   - Create or open the Tethon project.
-   - Add a new `Compose` service.
-   - Choose `Docker Compose`, not `Stack`.
-   - Set the source to this GitHub repo.
-   - Set the branch to `main`.
-   - Set the Compose Path to:
-
-   ```txt
-   deploy/hub/docker-compose.yml
-   ```
-
-   The compose file pulls the hub image from GHCR. GitHub container packages are
-   private by default, so configure Dokploy registry credentials with read access
-   to `ghcr.io/justinyahin/tethon-hub` unless you intentionally make the package
-   public.
-
-3. Set the hub token.
-
-   In the Compose service environment variables, add:
+4. Configure registry credentials if needed.
+5. Set the required secret:
 
    ```txt
    TETHON_HUB_AUTH_TOKEN=<strong-random-token>
    ```
 
-   Use the same token for:
+6. Keep the `hub-data` volume attached.
+7. Deploy the service.
 
-   - this Dokploy environment variable
-   - the `HUB_AUTH_TOKEN` Worker secret on `tethon-web`
-   - local `TETHON_HUB_AUTH_TOKEN` when running `tethon-hostd` or `tethon`
+The [Compose file](../deploy/hub/docker-compose.yml) owns image, environment, and volume settings.
+The hub stores push-device registrations in `/var/lib/tethon/hub.db`.
+The host registry remains in memory.
 
-   The compose file references the variable explicitly:
+Optional settings:
 
-   ```yaml
-   environment:
-     TETHON_HUB_AUTH_TOKEN: ${TETHON_HUB_AUTH_TOKEN:?set TETHON_HUB_AUTH_TOKEN in Dokploy}
-     TETHON_HUB_AUTH_TOKENS: ${TETHON_HUB_AUTH_TOKENS:-}
-     TETHON_EXPO_ACCESS_TOKEN: ${TETHON_EXPO_ACCESS_TOKEN:-}
-   volumes:
-     - hub-data:/var/lib/tethon
-   ```
+- `TETHON_HUB_AUTH_TOKENS` accepts additional tokens during rotation.
+- `TETHON_EXPO_ACCESS_TOKEN` is needed only when Expo Push Security is enabled.
 
-   `TETHON_HUB_AUTH_TOKENS` is optional. It is only needed during token
-   rotation.
+Use Dokploy's domain routing before adding manual Traefik labels.
+Disable push-triggered Dokploy auto-deploy under the [CI policy](ci-deploy.md#control-images).
+Configure the web app through [web setup](../web/README.md) and [Worker deployment](ci-deploy.md#web-worker).
+Use an accepted hub token for the web Worker, hosts, CLI, and mobile app.
 
-   `TETHON_EXPO_ACCESS_TOKEN` is optional. Leave it blank unless Expo Push
-   Security is enabled for the project; if enabled, set it to the EAS push
-   access token so the hub can call Expo's push API.
+## Verify
 
-   The hub stores registered mobile push devices in SQLite at
-   `/var/lib/tethon/hub.db`. Keep the `hub-data` volume attached across
-   redeploys so phones do not need to reopen the app after every hub restart.
+Check the public endpoint:
 
-4. Configure the domain in Dokploy.
+```sh
+curl -fsS https://hub.tethon.dev/healthz
+```
 
-   Use Dokploy's Domains tab for the Compose service:
+Expected result: HTTP `200`.
+This endpoint checks the hub process and proxy, not host connectivity.
 
-   - Domain: `hub.tethon.dev`
-   - Service: `hub`
-   - Container port: `39180`
-   - HTTPS: enabled
+Check authentication:
 
-   Do not add manual Traefik labels to the compose file unless Dokploy's native
-   Domains UI cannot work for your VPS setup.
+```sh
+curl -i https://hub.tethon.dev/hosts
+```
 
-5. Deploy.
+Expected result: `401 Unauthorized`.
+With an accepted token, list hosts:
 
-   Click Deploy in Dokploy and watch the deployment logs. The service should
-   pull the configured hub image, then start the container with:
+```sh
+export TETHON_HUB_AUTH_TOKEN='<same-token>'
+curl -fsS -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" https://hub.tethon.dev/hosts
+```
 
-   ```sh
-   tethon-hub -addr 0.0.0.0:39180
-   ```
+Expected result: HTTP `200` and a host list.
+The list can be empty before a host registers.
 
-   For runtime diagnostics, use the Dokploy service logs for the Compose
-   service. Useful hub log events:
+After a phone registers for push, send a test notification:
 
-   - `hub_host_registered`: a host registered or refreshed its metadata. Check
-     `host_id`, `url`, `repo_count`, `agent_count`, and `online`.
-   - `hub_host_heartbeat`: a registered host heartbeat succeeded. Check
-     `host_id`, `url`, and `last_seen`.
-   - `hub_host_heartbeat_unknown`: a daemon sent a heartbeat for a host id the
-     in-memory hub registry does not know, usually after a hub restart; hostd
-     should re-register on the next loop.
+```sh
+curl -fsS \
+  -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST https://hub.tethon.dev/push/test \
+  -d '{"title":"Tethon","body":"Push test"}'
+```
 
-6. Smoke test.
+Test the approval notification shape:
 
-   From your machine:
+```sh
+curl -fsS \
+  -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST https://hub.tethon.dev/push/approvals/test \
+  -d '{"host_id":"mac","session_id":"ses_test","request_id":"approval_test","agent":"claude-cli","tool_name":"Bash","repo":"tethon"}'
+```
 
-   ```sh
-   curl -fsS https://hub.tethon.dev/healthz
-   ```
+The phone should receive each notification.
+The sample identifiers do not refer to a real pending approval.
 
-   `/healthz` is intentionally unauthenticated and cheap. It only confirms the
-   hub process and reverse proxy path are alive; it does not fan out to hosts or
-   require the bearer token.
+## Token rotation
 
-   The authenticated API should reject missing auth:
-
-   ```sh
-   curl -i https://hub.tethon.dev/hosts
-   ```
-
-   It should return `401 Unauthorized`.
-
-   With the token:
-
-   ```sh
-   export TETHON_HUB_AUTH_TOKEN='<same-token>'
-   curl -fsS -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" https://hub.tethon.dev/hosts
-   ```
-
-   After a phone has registered for push, send a generic smoke-test
-   notification:
-
-   ```sh
-   curl -fsS \
-     -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" \
-     -H "Content-Type: application/json" \
-     -X POST https://hub.tethon.dev/push/test \
-     -d '{"title":"Tethon","body":"Push test"}'
-   ```
-
-   Send an approval-shaped smoke-test notification:
-
-   ```sh
-   curl -fsS \
-     -H "Authorization: Bearer $TETHON_HUB_AUTH_TOKEN" \
-     -H "Content-Type: application/json" \
-     -X POST https://hub.tethon.dev/push/approvals/test \
-     -d '{"host_id":"mac","session_id":"ses_test","request_id":"approval_test","agent":"claude-cli","tool_name":"Bash","repo":"tethon"}'
-   ```
-
-7. Point web at the hub.
-
-   The `tethon-web` Worker needs:
-
-   ```txt
-   HUB_BASE_URL=https://hub.tethon.dev
-   HUB_AUTH_TOKEN=<same token as TETHON_HUB_AUTH_TOKEN>
-   ```
-
-   `HUB_AUTH_TOKEN` should be a Worker secret.
-
-## Token Rotation
-
-The hub accepts one primary token plus optional additional accepted tokens:
+The hub accepts a primary token and optional additional tokens:
 
 ```txt
 TETHON_HUB_AUTH_TOKEN=<primary-token>
 TETHON_HUB_AUTH_TOKENS=<additional-token-1>,<additional-token-2>
 ```
 
-Use this to rotate without downtime:
-
-1. Generate a new token:
+1. Generate a replacement token:
 
    ```sh
    openssl rand -base64 48
    ```
 
-2. In Dokploy, add the new token to `TETHON_HUB_AUTH_TOKENS`, leaving the old
-   `TETHON_HUB_AUTH_TOKEN` in place. Deploy the hub.
-
-3. Verify both old and new tokens work:
+2. Add it to `TETHON_HUB_AUTH_TOKENS` in Dokploy.
+3. Keep the old primary token active.
+4. Redeploy the hub.
+5. Verify both tokens:
 
    ```sh
    curl -fsS -H "Authorization: Bearer <old-token>" https://hub.tethon.dev/hosts
    curl -fsS -H "Authorization: Bearer <new-token>" https://hub.tethon.dev/hosts
    ```
 
-4. Update the `tethon-web` Worker secret:
+6. Replace the [Worker secret](ci-deploy.md#web-worker) and deploy the Worker.
+7. Replace the token in each Mac and VPS host configuration.
+8. Restart the affected hosts under their [Mac](macos-host-daemon.md) or [VPS](hostd-deploy-dokploy.md) runbook.
+9. Replace the token in CLI environments and mobile connection settings.
+10. Set the new primary token in Dokploy:
 
-   ```sh
-   cd web
-   bun wrangler secret put HUB_AUTH_TOKEN
-   bun deploy
-   ```
+    ```txt
+    TETHON_HUB_AUTH_TOKEN=<new-token>
+    TETHON_HUB_AUTH_TOKENS=
+    ```
 
-5. Update each installed Mac host daemon config:
+11. Redeploy the hub.
+12. Verify the final state:
 
-   ```txt
-   ~/.config/tethon/hostd.env
-   ```
+    ```sh
+    curl -i -H "Authorization: Bearer <old-token>" https://hub.tethon.dev/hosts
+    curl -fsS -H "Authorization: Bearer <new-token>" https://hub.tethon.dev/hosts
+    ```
 
-   Set:
+The old token should return `401`. The new token should return `200`.
+If a client fails, restore an accepted token before removing the old token.
 
-   ```sh
-   TETHON_HUB_AUTH_TOKEN=<new-token>
-   ```
+## Host connectivity
 
-   Restart the daemon:
+Hosts register and open outbound WebSocket connections to the hub.
+Session operations use those connections.
+The VPS needs no inbound route to the host diagnostics listener.
+Tailscale is optional.
 
-   ```sh
-   scripts/macos-hostd.sh restart
-   ```
-
-6. Update any local CLI shell/env setup that exports `TETHON_HUB_AUTH_TOKEN`.
-
-7. Promote the new token in Dokploy:
-
-   ```txt
-   TETHON_HUB_AUTH_TOKEN=<new-token>
-   TETHON_HUB_AUTH_TOKENS=
-   ```
-
-   Deploy the hub again.
-
-8. Confirm the old token fails and the new token still works:
-
-   ```sh
-   curl -i -H "Authorization: Bearer <old-token>" https://hub.tethon.dev/hosts
-   curl -fsS -H "Authorization: Bearer <new-token>" https://hub.tethon.dev/hosts
-   ```
-
-   The old token should return `401 Unauthorized`.
-
-For local development, dotenvx can be used as an optional convenience to load
-`TETHON_HUB_AUTH_TOKEN` for commands:
-
-```sh
-dotenvx run -- go run ./control/cmd/tethon hosts list --hub-url https://hub.tethon.dev
-```
-
-Do not use dotenvx for Dokploy or Cloudflare production secrets.
-
-## Current Host Connectivity Caveat
-
-The current prototype still has the hub call the host daemon at the URL the
-daemon registers. Until host-initiated persistent connections land, the VPS must
-be able to reach each `tethon-hostd`.
-
-For your own setup now, use Tailscale on both the VPS and Mac:
-
-```sh
-tethon-hostd \
-  -hub-url https://hub.tethon.dev \
-  -addr <mac-tailscale-ip>:39181 \
-  -repo-root /path/to/repos
-```
-
-The daemon will register `http://<mac-tailscale-ip>:39181`, and the hub on the
-VPS can route to it.
-
-If hosts register but session listing or session creation returns `502`, check
-the Dokploy hub logs and confirm the VPS can call the registered `url` directly,
-for example over Tailscale. If `/hosts` returns `401`, the hub, web Worker,
-host daemon, or CLI are not using the same accepted bearer token.
+For a session request that returns `502`, inspect both hub and host reverse connection logs.
+Useful hub events are `hub_host_registered`, `hub_host_heartbeat`, and `hub_host_heartbeat_unknown`.
+An unknown heartbeat can follow a hub restart. The host should register again.
