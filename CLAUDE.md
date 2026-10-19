@@ -49,3 +49,11 @@ A code change or commit does not update a running service.
   Tell the user that the Worker needs deployment or promotion to update `web.tethon.dev`.
 
 Documentation-only changes need no runtime restart or deployment.
+
+## Source readability
+
+Use blank lines to separate import groups, types, state, derived values, helpers, and exports.
+Separate validation, database work, and results in longer functions.
+Expand complex markup blocks. Leave space between major page sections and CSS rules.
+Keep related short statements together. Add comments to explain reasons that the code does not show.
+Keep visible text spacing intact. Do not edit generated files or vendor files for layout.
