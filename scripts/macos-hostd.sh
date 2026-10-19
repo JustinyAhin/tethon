@@ -220,6 +220,7 @@ install_hostd() {
 	if is_loaded; then
 		launchctl bootout "$(service_target)" >/dev/null 2>&1 || true
 	fi
+	launchctl enable "$(service_target)"
 	launchctl bootstrap "$(launch_domain)" "$plist_path"
 	launchctl kickstart -k "$(service_target)"
 
@@ -230,6 +231,7 @@ install_hostd() {
 
 restart_hostd() {
 	require_macos
+	launchctl enable "$(service_target)"
 	if is_loaded; then
 		launchctl kickstart -k "$(service_target)"
 	else
