@@ -1,10 +1,10 @@
 
 # Dolt database files (added by bd init)
 .dolt/
+.beads/dolt/
 *.db
 
-# Local Beads runtime and backup files
-.beads-backup/
+# Local Beads runtime files (keep .beads-backup/ available for Git tracking)
 .beads/*.lock
 .beads/*.log
 .beads/*.pid

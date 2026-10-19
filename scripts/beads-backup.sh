@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sync a Dolt-native Beads backup to a git-tracked directory.
-# Restore with: bd init --prefix tethon --skip-hooks && bd backup restore .beads-backup/ --force
+# Restore (prefix: tethon): https://github.com/JustinyAhin/kb/blob/main/engineering/issue-tracking.md
 
 set -euo pipefail
 
